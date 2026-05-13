@@ -1,8 +1,13 @@
-# Crontab embarqué pour Docker (supercronic).
-# Pas de PATH manuel : Docker /usr/local/bin déjà OK.
-# Logs : supercronic logge sur stdout/stderr → docker logs.
+# Crontab Docker — lu par supercronic dans le container.
+# NE PAS confondre avec CRON_DISABLED.txt à la racine du repo
+# (qui documente les crons pour install HOST native sans Docker).
 #
-# Format : minute hour day month weekday command
+# Ce fichier est chargé par supercronic au démarrage du container :
+#   ENTRYPOINT [dumb-init] CMD [supercronic, -inotify, /app/crontab]
+#
+# Logs : supercronic logge sur stdout → consultable via `docker logs linkedin-pipeline`.
+# Pas besoin de PATH manuel : Docker fournit /usr/local/bin par défaut.
+# Format cron classique : minute hour day month weekday command
 
 # Mardi 10h30 — evergreen PME
 30 10 * * 2 cd /app && ./pipeline.sh

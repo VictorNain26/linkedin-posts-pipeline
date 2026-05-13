@@ -1,0 +1,32 @@
+# Override automatique en local (dev).
+#
+# Docker Compose charge automatiquement ce fichier s'il existe à côté
+# de docker-compose.yml — pas besoin de flag --file.
+#
+# Pour PROD : utiliser uniquement docker-compose.yml :
+#   docker compose -f docker-compose.yml up -d
+#
+# Cet override expose :
+# - Code source en bind mount (modif sans rebuild)
+# - Crontab dev custom (override de l'embedded)
+# - Variables d'env de debug
+
+services:
+  linkedin-pipeline:
+    # Mount code source en bind mount → hot-reload pour itérer
+    volumes:
+      - ./:/app:ro
+      - ./data:/data
+      - ./docker/crontab.docker:/app/crontab:ro
+
+    environment:
+      # Mode forcé pour tests (override le weekday auto-detect)
+      PIPELINE_MODE: veille
+      # Sortie + verbeuse
+      PYTHONUNBUFFERED: 1
+
+    # Pas de limite resource en dev (faciliter le debug)
+    deploy:
+      resources:
+        limits:
+          memory: 4G

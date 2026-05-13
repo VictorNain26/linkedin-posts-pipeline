@@ -1,4 +1,7 @@
-# LinkedIn pipeline crons — DÉSACTIVÉS en attente approbation Community Management API.
+# LinkedIn pipeline crons — pour install HOST NATIVE (sans Docker).
+# Pour Docker, voir docker/crontab.docker (chargé automatiquement par supercronic).
+#
+# DÉSACTIVÉS en attente approbation Community Management API.
 #
 # Activation (après réception de l'email d'approbation) :
 #   1. Run oauth_setup.py via SSH tunnel pour générer les tokens (cf. README.md §Setup)

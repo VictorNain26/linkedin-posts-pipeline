@@ -14,7 +14,7 @@
 # ============================================================
 # Stage 1 — Builder : compile les wheels Python
 # ============================================================
-FROM python:3.13-slim-bookworm AS builder
+FROM python:3.13.13-slim-bookworm AS builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -35,7 +35,7 @@ RUN pip install --user --no-cache-dir -r requirements.txt
 # ============================================================
 # Stage 2 — Runtime : image minimaliste de production
 # ============================================================
-FROM python:3.13-slim-bookworm AS runtime
+FROM python:3.13.13-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
