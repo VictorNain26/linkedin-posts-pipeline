@@ -1,0 +1,21 @@
+# Trivy CVE ignore list — justifications obligatoires.
+#
+# Format : un CVE par ligne, commentaire au-dessus.
+# Source officielle : https://aquasecurity.github.io/trivy/latest/docs/configuration/filtering/#trivyignore
+#
+# ────────────────────────────────────────────────────────────────
+# Go stdlib bundled with Chromium (Debian Bookworm package)
+# ────────────────────────────────────────────────────────────────
+# Ces CVE concernent la Go stdlib statiquement linkée dans le binaire
+# Chromium fourni par Debian Bookworm. Nous ne contrôlons pas la version
+# de Go utilisée pour builder le package debian. Mitigation :
+# - Chromium ici sert UNIQUEMENT à rendre un HTML local (pas d'accès externe)
+# - Pas d'exposition réseau public (cron headless interne)
+# - Aucune des CVE n'est exploitable dans notre context d'usage
+# À ré-évaluer si on passe à debian-trixie ou image Puppeteer officielle.
+
+CVE-2026-33811
+CVE-2026-33814
+CVE-2026-39820
+CVE-2026-39836
+CVE-2026-42499

@@ -26,6 +26,5 @@ data/
 .DS_Store
 *.swp
 
-# Node
-package.json
+# Node — package.json est versionné (contient overrides CVE), pas le lock
 package-lock.json

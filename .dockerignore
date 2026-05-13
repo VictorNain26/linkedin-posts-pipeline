@@ -11,9 +11,8 @@ __pycache__/
 .venv/
 .tmp_test_data/
 
-# Node artifacts (Dockerfile installe Puppeteer from scratch)
+# Node artifacts (on garde package.json pour les overrides picomatch CVE)
 node_modules/
-package.json
 package-lock.json
 
 # Runtime data (use volume mount instead)

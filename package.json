@@ -1,0 +1,13 @@
+{
+  "name": "linkedin-posts-pipeline",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Carousel PDF generator (Puppeteer) for LinkedIn posts pipeline. Picomatch overridden to fix CVE-2026-33671 ReDoS that Puppeteer pulls transitively.",
+  "license": "MIT",
+  "dependencies": {
+    "puppeteer": "24.43.1"
+  },
+  "overrides": {
+    "picomatch": "^4.0.4"
+  }
+}

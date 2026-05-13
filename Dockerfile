@@ -104,16 +104,12 @@ WORKDIR /app
 # ── Python deps : copy du builder ──
 COPY --from=builder --chown=linkedin:linkedin /root/.local /home/linkedin/.local
 
-# ── Puppeteer pinné (reproducible builds) ──
-# On installe `puppeteer` standard avec PUPPETEER_SKIP_DOWNLOAD=true :
-# - bundled Chromium NON téléchargé (gain ~300MB)
-# - launch() utilise PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-# Cohérent avec le setup local (Victor's victorserv) qui peut aussi utiliser
-# le Chromium système si désiré.
-ARG PUPPETEER_VERSION=24.43.1
-RUN npm init -y --silent \
-    && npm install --omit=optional --no-fund --no-audit \
-        puppeteer@${PUPPETEER_VERSION}
+# ── Puppeteer via package.json versionné (avec overrides CVE) ──
+# Le package.json est COPY du repo pour bénéficier des overrides picomatch
+# (CVE-2026-33671 ReDoS). Sans ça, Puppeteer ramène la version vulnérable.
+# Setup : PUPPETEER_SKIP_DOWNLOAD=true → utilise Chromium système (gain ~300MB).
+COPY --chown=linkedin:linkedin package.json /app/package.json
+RUN npm install --omit=optional --no-fund --no-audit
 
 # ── Code applicatif (en dernier pour optimiser le cache layer) ──
 COPY --chown=linkedin:linkedin . /app/

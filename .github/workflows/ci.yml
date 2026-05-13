@@ -104,21 +104,10 @@ jobs:
         with:
           image-ref: linkedin-posts-pipeline:ci
           format: table
-          # Bloque uniquement sur CRITICAL — les HIGH dans Chromium debian + Go stdlib
-          # sont hors de notre contrôle (deps système). Visibles dans logs mais non-bloquantes.
           exit-code: 1
-          severity: CRITICAL
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
-        continue-on-error: false
-
-      - name: Trivy vulnerability report (HIGH, non-blocking)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: linkedin-posts-pipeline:ci
-          format: table
-          exit-code: 0
-          severity: HIGH
-          ignore-unfixed: true
+          trivyignores: .trivyignore
 
       - name: Hadolint Dockerfile
         uses: hadolint/hadolint-action@v3.3.0
