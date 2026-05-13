@@ -95,7 +95,7 @@ Crons indépendants :
 ### Option 1 — Docker (recommandé)
 
 ```bash
-git clone https://github.com/VictorL/linkedin-posts-pipeline.git
+git clone https://github.com/VictorNain26/linkedin-posts-pipeline.git
 cd linkedin-posts-pipeline
 cp .env.example .env  # remplir secrets
 docker compose up -d
@@ -104,7 +104,7 @@ docker compose up -d
 ### Option 2 — Setup local (Ubuntu)
 
 ```bash
-git clone https://github.com/VictorL/linkedin-posts-pipeline.git
+git clone https://github.com/VictorNain26/linkedin-posts-pipeline.git
 cd linkedin-posts-pipeline
 
 python3 -m venv .venv
