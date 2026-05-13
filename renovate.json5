@@ -1,0 +1,105 @@
+{
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  extends: [
+    "config:best-practices",
+    ":semanticCommits",
+    ":automergeMinor",
+    ":automergePatch",
+    "schedule:weekly",
+  ],
+
+  // Branche cible
+  baseBranches: ["main"],
+
+  // Limites pour éviter la surcharge de PR
+  prConcurrentLimit: 5,
+  prHourlyLimit: 2,
+
+  // Group les updates similaires
+  packageRules: [
+    // ── Anthropic SDK : update prudent (cœur du pipeline) ──
+    {
+      matchPackageNames: ["anthropic"],
+      semanticCommitType: "feat",
+      semanticCommitScope: "anthropic",
+      labels: ["anthropic-sdk", "review-carefully"],
+      minimumReleaseAge: "3 days",  // attendre 3j après release
+    },
+
+    // ── LinkedIn-related deps ──
+    {
+      matchPackageNames: ["requests"],
+      groupName: "LinkedIn HTTP stack",
+      semanticCommitScope: "deps",
+    },
+
+    // ── Dev deps (ruff, mypy, pytest) : auto-merge OK ──
+    {
+      matchPackageNames: ["ruff", "mypy", "pytest", "pytest-cov", "types-requests"],
+      groupName: "dev tooling",
+      automerge: true,
+      automergeType: "branch",
+      schedule: ["before 6am on monday"],
+    },
+
+    // ── Pre-commit hooks ──
+    {
+      matchManagers: ["pre-commit"],
+      groupName: "pre-commit hooks",
+      automerge: true,
+      schedule: ["before 6am on monday"],
+    },
+
+    // ── Docker base images : prudent ──
+    {
+      matchDatasources: ["docker"],
+      matchPackageNames: ["python", "node"],
+      minimumReleaseAge: "7 days",  // attendre 1 semaine pour stabilité
+      semanticCommitType: "fix",
+      semanticCommitScope: "docker",
+    },
+
+    // ── Puppeteer : major peut casser (Chromium incompat) ──
+    {
+      matchPackageNames: ["puppeteer"],
+      matchUpdateTypes: ["major"],
+      labels: ["puppeteer-major", "review-carefully"],
+      minimumReleaseAge: "7 days",
+    },
+
+    // ── GitHub Actions : auto-merge minor/patch ──
+    {
+      matchManagers: ["github-actions"],
+      automerge: true,
+      automergeType: "branch",
+    },
+  ],
+
+  // ── Custom regex managers pour les versions dans Dockerfile ──
+  customManagers: [
+    {
+      customType: "regex",
+      managerFilePatterns: ["/^Dockerfile$/"],
+      matchStrings: [
+        "ARG PUPPETEER_VERSION=(?<currentValue>.*)\\s",
+        "ARG SUPERCRONIC_VERSION=(?<currentValue>.*)\\s",
+      ],
+      datasourceTemplate: "github-releases",
+      depNameTemplate: "aptible/supercronic",
+      versioningTemplate: "semver",
+    },
+  ],
+
+  // ── Lock files refresh ──
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["before 6am on the first day of the month"],
+  },
+
+  // ── Vulnérabilité alerts : prio max ──
+  vulnerabilityAlerts: {
+    enabled: true,
+    labels: ["security"],
+    prPriority: 10,
+  },
+}

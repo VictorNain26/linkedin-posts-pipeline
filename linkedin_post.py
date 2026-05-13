@@ -4,7 +4,7 @@ LinkedIn Community Management API — versioned REST endpoint /rest/posts.
 Supporte 3 formats :
 - post_document_carousel : upload PDF + post avec media (le format principal)
 - post_text_only         : post texte simple (mix de format)
-- post_poll              : post avec sondage (mix de format, 1×/mois max)
+- post_poll              : post avec sondage (mix de format, 1x/mois max)
 
 Plus :
 - post_first_comment     : commente le post avec un message d'engagement
@@ -55,22 +55,30 @@ def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
     last_exc: Exception | None = None
     for attempt in range(MAX_HTTP_RETRIES):
         try:
-            resp = requests.request(method, url, **kwargs)
+            resp = requests.request(method, url, **kwargs)  # noqa: S113 — timeout set above
             if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "0")) or HTTP_RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"[linkedin] 429 rate limit, sleep {wait}s ({attempt+1}/{MAX_HTTP_RETRIES})", file=sys.stderr)
+                wait = int(resp.headers.get("Retry-After", "0")) or HTTP_RETRY_BASE_DELAY * (2**attempt)
+                print(
+                    f"[linkedin] 429 rate limit, sleep {wait}s ({attempt + 1}/{MAX_HTTP_RETRIES})",
+                    file=sys.stderr,
+                )
                 time.sleep(wait)
                 continue
             if 500 <= resp.status_code < 600:
-                wait = HTTP_RETRY_BASE_DELAY * (2 ** attempt)
-                print(f"[linkedin] {resp.status_code}, sleep {wait}s ({attempt+1}/{MAX_HTTP_RETRIES})", file=sys.stderr)
+                wait = HTTP_RETRY_BASE_DELAY * (2**attempt)
+                print(
+                    f"[linkedin] {resp.status_code}, sleep {wait}s ({attempt + 1}/{MAX_HTTP_RETRIES})",
+                    file=sys.stderr,
+                )
                 time.sleep(wait)
                 continue
             return resp
         except (requests.Timeout, requests.ConnectionError) as e:
             last_exc = e
-            wait = HTTP_RETRY_BASE_DELAY * (2 ** attempt)
-            print(f"[linkedin] transport {e}, sleep {wait}s ({attempt+1}/{MAX_HTTP_RETRIES})", file=sys.stderr)
+            wait = HTTP_RETRY_BASE_DELAY * (2**attempt)
+            print(
+                f"[linkedin] transport {e}, sleep {wait}s ({attempt + 1}/{MAX_HTTP_RETRIES})", file=sys.stderr
+            )
             time.sleep(wait)
     if last_exc:
         raise last_exc

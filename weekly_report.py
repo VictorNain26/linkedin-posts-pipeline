@@ -97,7 +97,9 @@ def _render_markdown(year: int, week: int, posts: list[dict], winners: dict) -> 
         lines.append("| Formule | Picked (90j) | Impressions moy. |")
         lines.append("|---|---|---|")
         for formula, stats in sorted(winners.items(), key=lambda x: -x[1]["picked"]):
-            lines.append(f"| {formula} | {stats['picked']} | {stats['avg_impressions']:,}".replace(",", " ") + " |")
+            lines.append(
+                f"| {formula} | {stats['picked']} | {stats['avg_impressions']:,}".replace(",", " ") + " |"
+            )
         lines.append("")
 
     # ── Best post ─────────────────────────────────────────

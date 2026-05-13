@@ -21,7 +21,7 @@ from config import (
     MODE_EVERGREEN,
     MODE_VEILLE,
 )
-from history import record_format_decision, recent_formats_for_mode
+from history import recent_formats_for_mode, record_format_decision
 
 
 def _carousel_streak(formats: list[str]) -> int:

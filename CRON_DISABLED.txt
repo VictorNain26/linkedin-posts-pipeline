@@ -37,6 +37,10 @@
 # ── Rapport hebdomadaire ────────────────────────────────────────────
 # Lundi 07h00 — synthèse semaine N-1 + envoi par email
 # 0 7 * * 1 cd /home/victormoi/linkedin-posts && ./weekly_report.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# ── Backup auto ─────────────────────────────────────────────────────
+# Daily 02h00 — dump SQLite + tar.gz, rotation 14 jours
+# 0 2 * * * cd /home/victormoi/linkedin-posts && ./backup.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
 # ────────────────────────────────────────────────────────────────────────
 #
 # Variables d'environnement requises (dans .env, mode 600) :

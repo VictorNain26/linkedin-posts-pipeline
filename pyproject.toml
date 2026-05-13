@@ -1,0 +1,104 @@
+[project]
+name = "linkedin-posts-pipeline"
+version = "1.0.0"
+description = "Pipeline autonome LinkedIn — 8 agents Claude, multi-format, analytics"
+requires-python = ">=3.13"
+license = { text = "MIT" }
+authors = [{ name = "Victor Lenain" }]
+
+dependencies = [
+    "anthropic>=0.101.0",
+    "feedparser>=6.0.12",
+    "requests>=2.34.0",
+    "python-dotenv>=1.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.12",
+    "mypy>=2.1.0",
+    "types-requests",
+]
+
+# ──────────────────────────────────────────────────────────────
+# Ruff : linter + formatter (remplace black + isort + flake8 + pyupgrade)
+# ──────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py313"
+line-length = 110
+extend-exclude = [".venv", "data", "output", "logs"]
+
+[tool.ruff.lint]
+select = [
+    "E", "W",   # pycodestyle
+    "F",        # pyflakes
+    "I",        # isort
+    "B",        # bugbear (anti-patterns)
+    "UP",       # pyupgrade (use modern syntax)
+    "SIM",      # simplify
+    "RUF",      # ruff-specific
+    "PL",       # pylint
+    "S",        # bandit (security)
+]
+ignore = [
+    "PLR0913",  # too many args
+    "PLR2004",  # magic numbers (utilisés expressément dans config)
+    "S101",     # assert (utilisé en tests + smoke checks)
+    "E501",     # line too long (déjà géré par formatter)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# tests : asserts + fake creds + imports lazy (pour reload modules)
+"tests/*" = ["S101", "S105", "S106", "PLC0415"]
+"tests/conftest.py" = ["E402"]  # imports après env setup
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+# ──────────────────────────────────────────────────────────────
+# Mypy : type checking strict mais pragmatique
+# ──────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.13"
+strict = false  # gradual typing
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+no_implicit_optional = true
+check_untyped_defs = true
+ignore_missing_imports = true  # feedparser, anthropic typings parfois manquants
+
+# ──────────────────────────────────────────────────────────────
+# Pytest
+# ──────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning",
+]
+
+[tool.coverage.run]
+source = ["."]
+omit = [
+    "tests/*",
+    ".venv/*",
+    "oauth_setup.py",       # interactif, pas testable unitairement
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

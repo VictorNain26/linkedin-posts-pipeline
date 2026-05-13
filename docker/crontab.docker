@@ -23,3 +23,6 @@
 
 # Lundi 7h — weekly report
 0 7 * * 1 cd /app && ./weekly_report.sh
+
+# Daily 2h — backup du volume /data (rotation 14 jours)
+0 2 * * * cd /app && ./backup.sh

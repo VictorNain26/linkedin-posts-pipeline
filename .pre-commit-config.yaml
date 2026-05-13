@@ -1,0 +1,59 @@
+# Pre-commit hooks — exécutés avant chaque commit local.
+# Installation : pip install pre-commit && pre-commit install
+# Run all files : pre-commit run --all-files
+#
+# Versions pinnées (renovate update auto via config dans renovate.json5)
+
+repos:
+  # ── Whitespace, fichiers de base ──
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ["--maxkb=500"]
+      - id: detect-private-key
+
+  # ── Ruff : lint + format Python ──
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.12
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  # ── Mypy : type checking ──
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v2.1.0
+    hooks:
+      - id: mypy
+        additional_dependencies:
+          - types-requests
+        files: ^(?!tests/).*\.py$  # skip tests dir
+
+  # ── Shellcheck : lint bash ──
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.10.0.1
+    hooks:
+      - id: shellcheck
+        args: ["--severity=warning"]
+
+  # ── Hadolint : lint Dockerfile ──
+  - repo: https://github.com/hadolint/hadolint
+    rev: v2.13.1-beta
+    hooks:
+      - id: hadolint-docker
+        args: ["--ignore=DL3008", "--ignore=DL3013"]  # apt versions, pip versions
+
+  # ── Detect secrets ──
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: package-lock.json

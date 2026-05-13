@@ -35,8 +35,8 @@ _auth_code: str | None = None
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self):  # noqa: N802
-        global _auth_code
+    def do_GET(self):
+        global _auth_code  # noqa: PLW0603 — single-use OAuth handler
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if "error" in params:
             self.send_response(400)
@@ -128,11 +128,14 @@ def main() -> int:
     set_key(ENV_FILE, "LI_PERSON_URN", person_urn)
 
     expires_in = tokens.get("expires_in", 0)
-    print(f"\n[oauth] saved tokens to .env", file=sys.stderr)
+    print("\n[oauth] saved tokens to .env", file=sys.stderr)
     print(f"[oauth] person URN  : {person_urn}", file=sys.stderr)
     print(f"[oauth] access TTL  : {expires_in}s (~{expires_in // 86400}d)", file=sys.stderr)
     if not refresh_token:
-        print("[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days", file=sys.stderr)
+        print(
+            "[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days",
+            file=sys.stderr,
+        )
     return 0
 
 

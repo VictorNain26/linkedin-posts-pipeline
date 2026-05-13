@@ -1,24 +1,27 @@
 """
-Pipeline 6 agents Sonnet 4.6 — génère slides carousel + hook texte + post LinkedIn.
+Pipeline 8 agents — génère slides carousel + hook + 1er commentaire LinkedIn.
 
 Modes :
-- evergreen (mardi) : cible PME, business-oriented, backlog ROI/process
-- veille (jeudi) : cible devs/CTOs, technique, backlog SDK/patterns
+- evergreen (mardi) : cible PME, angle business prospect
+- veille (jeudi)    : cible devs/CTOs, angle technique terrain
 Mode auto-détecté via weekday, override possible via PIPELINE_MODE env var.
 
-Agents séquentiels :
-  1. Pain Excavator   — identifie 3 douleurs prospect
-  2. Angle Scout      — angle contre-intuitif + hook visuel slide 1
-  3. Slide Architect  — structure les 7 slides
-  4. Victor's Pen     — réécrit dans la voix de Victor
-  5. Anti-AI Detector — retry-with-feedback pour les patterns interdits
-  6. Hook Writer      — écrit le hook texte du post (180-200 chars, voix orale)
+Agents :
+  1. Pain Excavator        (Sonnet) — 3 douleurs prospect
+  2. Angle Scout           (Sonnet) — angle contre-intuitif + hook visuel slide 1
+  3. Slide Architect       (Sonnet) — structure les 7 slides
+  4. Victor's Pen          (Sonnet) — réécrit dans la voix de Victor
+  5. Anti-AI Detector      (Sonnet) — retry-with-feedback sur patterns interdits
+  6. Hook Generator        (Sonnet) — 3 variations de hook texte
+  7. Hook Judge            (Haiku)  — sélectionne le winner
+  8. Engagement Comment    (Haiku)  — 1er commentaire (question + lien profil)
 
-Patterns CCA-F :
+Patterns :
 - tool_use + JSON Schema forcé sur tous les agents → 0 parsing libre
-- system blocks cacheables partagés entre tous les agents (1 cache key par run)
+- Sonnet pour créativité, Haiku pour sélection/structure → -30% tokens
 - retry-with-feedback sur Anti-AI Detector
-- dédup keyword overlap avec régénération (max N tentatives)
+- dédup keyword overlap par itération sur les news RSS
+- 0 fallback silencieux : NoUsableNewsError si aucune news exploitable
 """
 
 import json
@@ -31,6 +34,7 @@ from config import (
     ANTI_AI_PATTERNS,
     CTA_POST_SUFFIX,
     CTA_SLIDE_TEXT,
+    HAIKU_MODEL,
     HASHTAGS_BY_MODE,
     HOOK_VARIATIONS_COUNT,
     KEYWORD_OVERLAP_THRESHOLD,
@@ -44,7 +48,6 @@ from config import (
 )
 from format_selector import select_format
 from history import keyword_overlap_ratio
-
 
 # ──────────────────────────────────────────────────────────────
 # JSON Schemas (CCA-F D4 §3)
@@ -92,7 +95,10 @@ SLIDES_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
-                        "main": {"type": "string", "description": "Main text of the slide, 1 idea, max 15 words"},
+                        "main": {
+                            "type": "string",
+                            "description": "Main text of the slide, 1 idea, max 15 words",
+                        },
                         "sub": {"type": "string", "description": "Optional supporting line, can be empty"},
                     },
                     "required": ["main"],
@@ -223,7 +229,7 @@ def agent3_slide_architect(topic: str, angle: dict, mode: str) -> list[dict]:
 
 def agent4_victors_pen(slides_outline: list[dict], mode: str) -> list[dict]:
     outline_str = "\n".join(
-        f"Slide {i+1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
+        f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
         for i, s in enumerate(slides_outline)
     )
     out = call_tool(
@@ -258,7 +264,7 @@ def agent5_anti_ai_detector(slides: list[dict], mode: str) -> list[dict]:
             return current
         violations_str = ", ".join(f"'{v}'" for v in violations)
         outline_str = "\n".join(
-            f"Slide {i+1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
+            f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
             for i, s in enumerate(current)
         )
         out = call_tool(
@@ -315,12 +321,13 @@ def agent7_hook_judge(variants: list[dict], angle: dict, mode: str) -> dict:
 
     Critères : stoppe le scroll, ne sonne pas IA, tient sa promesse,
     matche l'audience du mode (PME vs dev).
+
+    Modèle : Haiku 4.5 (sélection, pas génération créative → 67% moins cher
+    que Sonnet sans perte de qualité sur ce type de tâche).
     """
-    variants_str = "\n".join(
-        f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants
-    )
+    variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
     out = call_tool(
-        model=SONNET_MODEL,
+        model=HAIKU_MODEL,
         system=system_voice(mode),
         user_text=(
             f"Angle du post : {angle['angle']}\n\n"
@@ -344,9 +351,12 @@ def agent8_engagement_comment(topic: str, angle: dict, mode: str) -> str:
 
     Best practice 2026 : pas un teaser ni juste un lien (pénalisé). C'est de
     la valeur ajoutée — une question d'engagement + lien profil au passage.
+
+    Modèle : Haiku 4.5 (commentaire court 200-400 chars, structure simple →
+    67% moins cher que Sonnet, qualité équivalente).
     """
     out = call_tool(
-        model=SONNET_MODEL,
+        model=HAIKU_MODEL,
         system=system_voice(mode),
         user_text=(
             f"Sujet du post : {topic}\n"
@@ -369,10 +379,38 @@ def agent8_engagement_comment(topic: str, angle: dict, mode: str) -> str:
 # Helpers
 # ──────────────────────────────────────────────────────────────
 _STOPWORDS = {
-    "pour", "dans", "avec", "votre", "vous", "comment", "mais", "plus", "tout",
-    "cette", "sont", "nous", "elle", "leur", "leurs", "alors", "donc", "même",
-    "déjà", "aussi", "très", "bien", "tous", "ainsi", "encore", "entre", "sans",
-    "peut", "fait", "faire", "faut", "comme",
+    "pour",
+    "dans",
+    "avec",
+    "votre",
+    "vous",
+    "comment",
+    "mais",
+    "plus",
+    "tout",
+    "cette",
+    "sont",
+    "nous",
+    "elle",
+    "leur",
+    "leurs",
+    "alors",
+    "donc",
+    "même",
+    "déjà",
+    "aussi",
+    "très",
+    "bien",
+    "tous",
+    "ainsi",
+    "encore",
+    "entre",
+    "sans",
+    "peut",
+    "fait",
+    "faire",
+    "faut",
+    "comme",
 }
 
 
@@ -393,14 +431,28 @@ def extract_keywords(topic: str, slides: list[dict]) -> list[str]:
 
 def slugify(text: str) -> str:
     text = text.lower()
-    repl = str.maketrans({
-        "à": "a", "â": "a", "ä": "a",
-        "é": "e", "è": "e", "ê": "e", "ë": "e",
-        "ï": "i", "î": "i",
-        "ô": "o", "ö": "o",
-        "ù": "u", "û": "u", "ü": "u",
-        "ç": "c", "ÿ": "y", "œ": "oe", "æ": "ae",
-    })
+    repl = str.maketrans(
+        {
+            "à": "a",
+            "â": "a",
+            "ä": "a",
+            "é": "e",
+            "è": "e",
+            "ê": "e",
+            "ë": "e",
+            "ï": "i",
+            "î": "i",
+            "ô": "o",
+            "ö": "o",
+            "ù": "u",
+            "û": "u",
+            "ü": "u",
+            "ç": "c",
+            "ÿ": "y",
+            "œ": "oe",
+            "æ": "ae",
+        }
+    )
     text = text.translate(repl)
     text = re.sub(r"[^a-z0-9]+", "-", text)
     return text[:50].strip("-")
@@ -511,8 +563,7 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
     else:
         # Toutes les news ont overlap trop haut ou ont fail
         raise NoUsableNewsError(
-            f"Aucune des {len(news_list)} news RSS n'est exploitable. "
-            f"Dernier motif : {last_error}"
+            f"Aucune des {len(news_list)} news RSS n'est exploitable. Dernier motif : {last_error}"
         )
 
     slides = ensure_cta(slides)
@@ -539,11 +590,7 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
     )
     slides_str = flatten_slides_to_strings(slides)
 
-    post_text = (
-        f"{winner_variant['hook'].strip()}\n\n"
-        f"{CTA_POST_SUFFIX}\n\n"
-        f"{HASHTAGS_BY_MODE[mode]}"
-    )
+    post_text = f"{winner_variant['hook'].strip()}\n\n{CTA_POST_SUFFIX}\n\n{HASHTAGS_BY_MODE[mode]}"
 
     return {
         "mode": mode,

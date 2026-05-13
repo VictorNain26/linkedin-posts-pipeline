@@ -12,8 +12,7 @@ import json
 import sqlite3
 from datetime import datetime
 
-from config import DB_PATH, KEYWORD_OVERLAP_THRESHOLD, MAX_HISTORY_DAYS, SQLITE_TIMEOUT
-
+from config import DB_PATH, MAX_HISTORY_DAYS, SQLITE_TIMEOUT
 
 # ──────────────────────────────────────────────────────────────
 # Schema
@@ -34,7 +33,6 @@ SCHEMA = [
     "CREATE INDEX IF NOT EXISTS idx_posts_status_date ON posts(status, published_at)",
     "CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug)",
     "CREATE INDEX IF NOT EXISTS idx_posts_mode_format ON posts(mode, format)",
-
     """CREATE TABLE IF NOT EXISTS hook_variants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         post_id INTEGER NOT NULL,
@@ -46,7 +44,6 @@ SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_variants_post ON hook_variants(post_id)",
     "CREATE INDEX IF NOT EXISTS idx_variants_winner ON hook_variants(is_winner, formula)",
-
     """CREATE TABLE IF NOT EXISTS post_analytics (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         post_id INTEGER NOT NULL,
@@ -58,7 +55,6 @@ SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_analytics_post ON post_analytics(post_id)",
     "CREATE INDEX IF NOT EXISTS idx_analytics_metric ON post_analytics(metric, fetched_at)",
-
     """CREATE TABLE IF NOT EXISTS format_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         decided_at DATETIME NOT NULL,
@@ -172,7 +168,13 @@ def record_hook_variants(post_id: int, variants: list[dict], winner_formula: str
         for v in variants:
             conn.execute(
                 "INSERT INTO hook_variants (post_id, formula, hook, is_winner, judge_reason) VALUES (?, ?, ?, ?, ?)",
-                (post_id, v["formula"], v["hook"], 1 if v["formula"] == winner_formula else 0, judge_reason if v["formula"] == winner_formula else None),
+                (
+                    post_id,
+                    v["formula"],
+                    v["hook"],
+                    1 if v["formula"] == winner_formula else 0,
+                    judge_reason if v["formula"] == winner_formula else None,
+                ),
             )
 
 
@@ -223,14 +225,19 @@ def posts_to_fetch_analytics(days: int = 30) -> list[tuple[int, str]]:
 
 
 def latest_analytics(post_id: int) -> dict[str, int]:
-    """Renvoie le dernier count par métrique pour un post donné."""
+    """Renvoie le dernier count PAR métrique pour un post donné."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
-            """SELECT metric, count FROM post_analytics
-               WHERE post_id = ?
-                 AND fetched_at = (SELECT MAX(fetched_at) FROM post_analytics WHERE post_id = ?)""",
-            (post_id, post_id),
+            """SELECT pa1.metric, pa1.count
+               FROM post_analytics pa1
+               WHERE pa1.post_id = ?
+                 AND pa1.fetched_at = (
+                    SELECT MAX(pa2.fetched_at)
+                    FROM post_analytics pa2
+                    WHERE pa2.post_id = pa1.post_id AND pa2.metric = pa1.metric
+                 )""",
+            (post_id,),
         ).fetchall()
     return {row[0]: row[1] for row in rows}
 
@@ -251,11 +258,18 @@ def posts_in_week(year: int, week: int) -> list[dict]:
     out = []
     for r in rows:
         analytics = latest_analytics(r[0])
-        out.append({
-            "id": r[0], "published_at": r[1], "topic": r[2], "slug": r[3],
-            "mode": r[4], "format": r[5], "linkedin_post_id": r[6],
-            "analytics": analytics,
-        })
+        out.append(
+            {
+                "id": r[0],
+                "published_at": r[1],
+                "topic": r[2],
+                "slug": r[3],
+                "mode": r[4],
+                "format": r[5],
+                "linkedin_post_id": r[6],
+                "analytics": analytics,
+            }
+        )
     return out
 
 

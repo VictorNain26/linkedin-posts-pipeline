@@ -3,7 +3,7 @@ Configuration centrale du pipeline LinkedIn posts.
 
 Architecture :
 - 2 modes complémentaires : "evergreen" (mardi, cible PME) et "veille" (jeudi, cible devs).
-- System blocks cacheables (cache_control ephemeral) partagés entre 6 agents par run.
+- System blocks partagés entre 8 agents par run (caching documenté dans system_voice).
 - Token budgets explicites par agent (évite de payer pour des max_tokens non utilisés).
 """
 
@@ -24,11 +24,11 @@ TOKEN_BUDGETS = {
     "architect": 1200,
     "pen": 1500,
     "detector": 1500,
-    "hook_generator": 800,    # génère 3 variations en 1 call
-    "hook_judge": 300,        # choisit la meilleure
-    "comment_writer": 400,    # 1er commentaire d'engagement
-    "format_picker": 200,     # facultatif : decide_format via LLM (sinon règle)
-    "weekly_report": 2000,    # synthèse rapport hebdo
+    "hook_generator": 800,  # génère 3 variations en 1 call
+    "hook_judge": 300,  # choisit la meilleure
+    "comment_writer": 400,  # 1er commentaire d'engagement
+    "format_picker": 200,  # facultatif : decide_format via LLM (sinon règle)
+    "weekly_report": 2000,  # synthèse rapport hebdo
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -89,8 +89,8 @@ AUDIENCE_DESC = {
         "Vocabulaire business, pas technique. Sensibles au ROI, au time-to-value, "
         "aux risques (coût, lock-in, hallucinations).\n\n"
         "MISSION : tu pars d'une news IA fraîche fournie par l'utilisateur et tu en tires "
-        "un angle BUSINESS PROSPECT — \"voici ce que cette annonce change concrètement pour "
-        "un dirigeant de PME\". Pas de jargon technique. Toujours ramener à un enjeu concret "
+        'un angle BUSINESS PROSPECT — "voici ce que cette annonce change concrètement pour '
+        'un dirigeant de PME". Pas de jargon technique. Toujours ramener à un enjeu concret '
         "(coût, productivité, risque, opportunité commerciale)."
     ),
     MODE_VEILLE: (
@@ -99,7 +99,7 @@ AUDIENCE_DESC = {
         "Sensibles au gain de productivité, aux pièges, aux comparaisons franches d'outils.\n\n"
         "MISSION : tu pars d'une news IA fraîche fournie par l'utilisateur et tu en tires "
         "un angle DEV/TECH — \"voici ce que cette annonce change concrètement pour quelqu'un "
-        "qui code des intégrations IA\". Retour terrain, comparaisons honnêtes, "
+        'qui code des intégrations IA". Retour terrain, comparaisons honnêtes, '
         "patterns concrets, pas de hype."
     ),
 }
@@ -140,21 +140,26 @@ ANTI_AI_PATTERNS = [
 
 
 def system_voice(mode: str) -> list[dict]:
-    """System blocks par mode — 2 cache breakpoints stables."""
+    """System blocks par mode.
+
+    Note prompt caching (mai 2026) : non activé ici car nos system blocks font
+    ~550 tokens — bien sous le minimum Sonnet 4.6 (2048) et Haiku 4.5 (4096).
+    `cache_control` serait silencieusement ignoré.
+    Source : https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    """
     return [
         {
             "type": "text",
             "text": (
                 "Tu es un assistant qui produit du contenu LinkedIn pour Victor Lenain, "
-                "développeur freelance full-stack + intégration IA basé à Paris.\n\n"
-                + AUDIENCE_DESC[mode]
+                "développeur freelance full-stack + intégration IA basé à Paris.\n\n" + AUDIENCE_DESC[mode]
             ),
-            "cache_control": {"type": "ephemeral"},
         },
         {
             "type": "text",
-            "text": VOICE_RULES + "\n\nPatterns à ne JAMAIS produire :\n" + "\n".join(f"- {p}" for p in ANTI_AI_PATTERNS),
-            "cache_control": {"type": "ephemeral"},
+            "text": VOICE_RULES
+            + "\n\nPatterns à ne JAMAIS produire :\n"
+            + "\n".join(f"- {p}" for p in ANTI_AI_PATTERNS),
         },
     ]
 
@@ -180,7 +185,7 @@ FORMAT_CAROUSEL = "carousel"
 FORMAT_TEXT = "text"
 FORMAT_POLL = "poll"
 
-# Stratégie de rotation des formats (best practice 2026 : varier 1×/2sem)
+# Stratégie de rotation des formats (best practice 2026 : varier 1x/2sem)
 # - evergreen (mardi) : toujours carousel — format core pour PME prospects
 # - veille (jeudi)    : carousel par défaut, mais on switch text/poll
 #   si >= MAX_SAME_FORMAT_STREAK carousels veille publiés à la suite.

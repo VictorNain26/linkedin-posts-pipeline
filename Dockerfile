@@ -58,7 +58,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         dumb-init \
         fonts-liberation \
         fonts-noto-color-emoji \
-        fonts-noto-cjk \
         libnss3 \
         libatk1.0-0 \
         libatk-bridge2.0-0 \
@@ -111,7 +110,7 @@ COPY --from=builder --chown=linkedin:linkedin /root/.local /home/linkedin/.local
 # - launch() utilise PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 # Cohérent avec le setup local (Victor's victorserv) qui peut aussi utiliser
 # le Chromium système si désiré.
-ARG PUPPETEER_VERSION=23.11.1
+ARG PUPPETEER_VERSION=24.43.1
 RUN npm init -y --silent \
     && npm install --omit=optional --no-fund --no-audit \
         puppeteer@${PUPPETEER_VERSION}

@@ -54,13 +54,15 @@ def fetch_recent_items(hours: int = RSS_LOOKBACK_HOURS) -> list[dict]:
                         continue  # malformed RSS date, skip entry but keep source
                     if pub_dt < cutoff:
                         continue
-                items.append({
-                    "title": entry.get("title", ""),
-                    "summary": (entry.get("summary") or "")[:500],
-                    "url": entry.get("link", ""),
-                    "source": (getattr(feed.feed, "title", None) or url),
-                    "published": entry.get("published", ""),
-                })
+                items.append(
+                    {
+                        "title": entry.get("title", ""),
+                        "summary": (entry.get("summary") or "")[:500],
+                        "url": entry.get("link", ""),
+                        "source": (getattr(feed.feed, "title", None) or url),
+                        "published": entry.get("published", ""),
+                    }
+                )
         except Exception as e:
             failures.append(f"{url}: {e}")
     if failures:
@@ -100,8 +102,8 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
         if len(scores) < len(items):
             scores = scores + [5] * (len(items) - len(scores))
         else:
-            scores = scores[:len(items)]
-    return sorted(zip(scores, items), key=lambda x: x[0], reverse=True)
+            scores = scores[: len(items)]
+    return sorted(zip(scores, items, strict=False), key=lambda x: x[0], reverse=True)
 
 
 def get_top_news(n: int = 5, min_score: int = 6) -> list[dict]:

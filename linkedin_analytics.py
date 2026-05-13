@@ -85,19 +85,19 @@ def _request_with_retry(url: str, headers: dict) -> requests.Response:
         try:
             resp = requests.get(url, headers=headers, timeout=REQUESTS_TIMEOUT)
             if resp.status_code == 429:
-                wait = int(resp.headers.get("Retry-After", "0")) or HTTP_RETRY_BASE_DELAY * (2 ** attempt)
+                wait = int(resp.headers.get("Retry-After", "0")) or HTTP_RETRY_BASE_DELAY * (2**attempt)
                 print(f"[analytics] 429, sleep {wait}s", file=sys.stderr)
                 time.sleep(wait)
                 continue
             if 500 <= resp.status_code < 600:
-                wait = HTTP_RETRY_BASE_DELAY * (2 ** attempt)
+                wait = HTTP_RETRY_BASE_DELAY * (2**attempt)
                 print(f"[analytics] {resp.status_code}, sleep {wait}s", file=sys.stderr)
                 time.sleep(wait)
                 continue
             return resp
         except (requests.Timeout, requests.ConnectionError) as e:
             last_exc = e
-            time.sleep(HTTP_RETRY_BASE_DELAY * (2 ** attempt))
+            time.sleep(HTTP_RETRY_BASE_DELAY * (2**attempt))
     if last_exc:
         raise last_exc
     raise RuntimeError(f"GET {url} failed after {MAX_HTTP_RETRIES} retries")
@@ -107,14 +107,16 @@ def fetch_metric(linkedin_post_id: str, metric: str, token: str) -> int | None:
     """Fetch un seul metric pour un post (total lifetime). Return None si pas dispo."""
     entity = _entity_param(linkedin_post_id)
     url = (
-        f"{LI_REST}/memberCreatorPostAnalytics"
-        f"?q=entity&entity={entity}&queryType={metric}&aggregation=TOTAL"
+        f"{LI_REST}/memberCreatorPostAnalytics?q=entity&entity={entity}&queryType={metric}&aggregation=TOTAL"
     )
     resp = _request_with_retry(url, _headers(token))
     if resp.status_code == 404:
         return None
     if resp.status_code != 200:
-        print(f"[analytics] {metric} for {linkedin_post_id}: HTTP {resp.status_code} — {resp.text[:200]}", file=sys.stderr)
+        print(
+            f"[analytics] {metric} for {linkedin_post_id}: HTTP {resp.status_code} — {resp.text[:200]}",
+            file=sys.stderr,
+        )
         return None
     elements = resp.json().get("elements", [])
     if not elements:

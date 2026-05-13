@@ -58,20 +58,20 @@ def call_tool(
             raise RuntimeError(f"Claude did not call tool '{tool['name']}' — got: {resp.content!r}")
         except RateLimitError as e:
             last_err = e
-            wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt) * 2
-            _log(f"RateLimit attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
+            wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt) * 2
+            _log(f"RateLimit attempt {attempt + 1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
             time.sleep(wait)
         except APIStatusError as e:
             last_err = e
             if e.status_code and 500 <= e.status_code < 600:
-                wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
-                _log(f"{e.status_code} attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
+                wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt)
+                _log(f"{e.status_code} attempt {attempt + 1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
                 time.sleep(wait)
             else:
                 raise
         except APIError as e:
             last_err = e
-            wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
-            _log(f"APIError attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}: {e}, sleeping {wait}s")
+            wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt)
+            _log(f"APIError attempt {attempt + 1}/{ANTHROPIC_MAX_ATTEMPTS}: {e}, sleeping {wait}s")
             time.sleep(wait)
     raise RuntimeError(f"Anthropic call_tool failed after {ANTHROPIC_MAX_ATTEMPTS} attempts: {last_err}")
