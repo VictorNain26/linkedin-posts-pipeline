@@ -133,7 +133,7 @@ HOOK_VARIANTS_TOOL = {
                             "type": "string",
                             "minLength": 80,
                             "maxLength": 220,
-                            "description": "150-200 chars. Voix orale. Pas de buzzword. AUCUN détail inventé.",
+                            "description": "150-200 chars. Voix orale. Pas de buzzword. Pas de détail inventé.",
                         },
                     },
                     "required": ["formula", "hook"],
@@ -246,7 +246,7 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
             f"- DERNIÈRE slide : CTA — DOIT contenir '{CTA_SLIDE_TEXT}'\n\n"
             "Chaque slide = 1 idée. main = phrase punchy ; sub = développement court (optionnel).\n"
             "Privilégie un carrousel COURT et DENSE plutôt que long et délayé.\n"
-            "INTERDIT : chiffres inventés, anecdotes perso, situations fictives. "
+            "À éviter : chiffres inventés, anecdotes perso, situations fictives. "
             "Si un point manque de fact, retire la slide."
         ),
         tool=SLIDES_TOOL,
@@ -273,9 +273,9 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
             "- les faits de l'article source (rien d'autre comme source factuelle)\n\n"
             "MODIFIE :\n"
             "- le phrasé pour matcher la voix orale + courte de Victor\n\n"
-            "INTERDIT : ajouter chiffres, anecdotes, situations qui ne sont pas dans l'outline "
+            "À éviter : ajouter chiffres, anecdotes, situations qui ne sont pas dans l'outline "
             "ou l'article. Si un point manque de fact, garde-le tel quel ou enlève-le. "
-            "N'invente PAS de détail pour rendre crédible.\n\n"
+            "Pas de détail inventé pour rendre crédible.\n\n"
             "Outline à réécrire :\n" + outline_str
         ),
         tool=SLIDES_TOOL,
@@ -333,13 +333,13 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
             f"Aperçu slides : {slides_summary}\n\n"
             "Écris 3 hooks pour le TEXTE du post LinkedIn (≈200 chars affichés avant See more).\n"
             "Ces hooks doivent être DIFFÉRENTS du hook visuel slide 1.\n\n"
-            "1 hook par formule (TOUTES orientées prospect, AUCUNE anecdote perso inventée) :\n\n"
+            "1 hook par formule (toutes orientées prospect, sans anecdote perso inventée) :\n\n"
             "- contrarian       : challenge une idée reçue du marché ou de l'article.\n"
             "                     Ex : 'Tout le monde pense que X. L'annonce d'hier dit l'inverse.'\n\n"
             "- data             : cite UN chiffre PRÉSENT dans l'article + son implication.\n"
             "                     SI l'article n'a pas de chiffre exploitable, n'utilise PAS cette formule "
             "                     (laisse vide ou propose une variante du contrarian).\n"
-            "                     N'invente JAMAIS un chiffre précis (pas de '73%' ou 'McKinsey' sortis de nulle part).\n\n"
+            "                     N'invente pas de chiffre précis (pas de '73%' ou 'McKinsey' sortis de nulle part).\n\n"
             "- prospect_question : pose une question qui résonne avec une douleur du prospect.\n"
             "                     Ex : 'Tu hésites encore avec X pour ton projet IA ? L'annonce d'hier "
             "                     pourrait te faire reconsidérer.'\n\n"
@@ -369,7 +369,7 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> di
             "Choisis LA meilleure pour l'audience définie en system.\n"
             "Critères de sélection :\n"
             "1. STOPPE le scroll (curiosité, promesse implicite forte)\n"
-            "2. AUCUNE invention factuelle : si un hook cite un chiffre précis, ce chiffre DOIT venir "
+            "2. Pas d'invention factuelle : si un hook cite un chiffre précis, ce chiffre doit venir "
             "   de l'article source. Si tu détectes un chiffre fabriqué, RECALE ce hook.\n"
             "3. PARLE au lecteur (pas anecdote perso fictive type 'Mardi dernier j'ai...'). "
             "   Si un hook raconte la vie de Victor de façon non sourcée, RECALE-le.\n"
@@ -400,15 +400,15 @@ def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
             "2. LE CTA explicite : ce que tu PROPOSES (audit gratuit, appel découverte, "
             "   sparring 30min, etc).\n"
             "3. LE LIVRABLE TANGIBLE : ce que le prospect REPART AVEC concrètement.\n"
-            "   - OBLIGATOIRE : un livrable nommé (pas 'on discute', 'on regarde').\n"
+            "   - Indispensable : un livrable nommé (pas 'on discute', 'on regarde').\n"
             "   - Exemples valides : 'une feuille de route claire', 'une short-list de 3 cas', "
             "     'une grille de risques chiffrée', 'un plan d'action prioritisé', "
             "     'un audit écrit de ta stack'.\n"
             "   - Si tu ne peux pas nommer le livrable → reformule le CTA.\n"
             f"4. LE LIEN d'action : {PROFILE_URL} OU 'DM ouvert'.\n\n"
             "Ton : direct, voix Victor (oral, courte), pas vendeur agressif.\n"
-            "INTERDIT : anecdote perso fictive, chiffre inventé, promesse exagérée, "
-            "verbe vague type 'discuter' / 'regarder' / 'voir' SANS livrable explicite."
+            "À éviter : anecdote perso fictive, chiffre inventé, promesse exagérée, "
+            "verbe vague type 'discuter' / 'regarder' / 'voir' sans livrable explicite."
         ),
         tool=CTA_COMMENT_TOOL,
         max_tokens=TOKEN_BUDGETS["comment_writer"],
@@ -535,7 +535,11 @@ def _news_to_topic(news: dict) -> str:
 
 
 def _article_context(news: dict) -> str:
-    """Construit le bloc 'ARTICLE SOURCE' grounding fourni à tous les agents."""
+    """Construit le bloc <article_source> grounding fourni à tous les agents.
+
+    Balisage XML pour aider Claude 4.x à reconnaître la source factuelle
+    (best practice Anthropic 2026 : XML tags > Markdown pour structuration).
+    """
     title = (news.get("title") or "").strip()
     url = (news.get("url") or "").strip()
     source = (news.get("source") or "").strip()
@@ -546,12 +550,13 @@ def _article_context(news: dict) -> str:
         body if body else "(pas de contenu détaillé — base-toi uniquement sur le titre, n'invente rien)"
     )
     return (
-        "═══ ARTICLE SOURCE (seule base factuelle autorisée) ═══\n"
+        "<article_source>\n"
+        "Seule base factuelle autorisée pour ce post.\n\n"
         f"Source : {source}\n"
         f"Titre  : {title}\n"
         f"URL    : {url}\n"
         f"Contenu :\n{body_text}\n"
-        "═══════════════════════════════════════════════════"
+        "</article_source>"
     )
 
 
