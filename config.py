@@ -65,7 +65,7 @@ RSS_ARTICLE_MAX_CHARS = 4000
 AUDIENCE_DESC = (
     "AUDIENCE : dirigeants de PME et CTOs français qui envisagent d'intégrer "
     "l'IA dans leur produit ou leurs process métier. Décideurs ou co-décideurs "
-    "sur le choix des outils et des prestataires.\n"
+    "sur le choix des outils et des prestataires. La MAJORITÉ N'EST PAS TECHNIQUE.\n"
     "Vocabulaire BUSINESS, pas technique. Sensibles au ROI, au time-to-value, "
     "aux risques (coût, lock-in, hallucinations, dépendance, conformité RGPD).\n\n"
     "ANGLE OBLIGATOIRE : tu pars d'un ARTICLE IA fraîchement publié et tu le commentes "
@@ -74,14 +74,22 @@ AUDIENCE_DESC = (
     "Réponds avec ses DOULEURS RÉELLES (budget IA flou, peur du lock-in fournisseur, "
     "ROI incertain, mise en prod fragile, équipe pas formée, conformité, coûts cachés), "
     "pas avec une histoire fictive.\n\n"
-    "INTERDIT : jargon technique inutile (API/UI/SDK/RAG) sans explication accessible. "
-    "Si un terme technique est nécessaire, explique-le en une phrase ou évite-le."
+    "RÈGLE ANTI-JARGON (best practice LinkedIn B2B 2026) :\n"
+    "- Si l'article cite un outil technique (Codex, SDK, API, RAG, MCP, etc.), "
+    "  tu le mentionnes AU MAX 2 FOIS dans tout le post, et tu TRADUIS son rôle en métier.\n"
+    "  Ex INTERDIT : répéter 'Codex génère du code' 5 fois.\n"
+    "  Ex AUTORISÉ : 'Codex transforme tes fichiers Excel en automatisation' (1 fois) "
+    "  puis 'l'outil fait X' / 'ça automatise Y' (paraphrases métier).\n"
+    "- Pas de jargon anglo (MBRs, reporting packs, variance bridges) sans traduction FR "
+    "  entre parenthèses la première fois.\n"
+    "- Test : un PDG d'usine de 50 personnes peut-il lire chaque slide sans Google ? "
+    "  Si non → reformule."
 )
 
 # ──────────────────────────────────────────────────────────────
 # Règle anti-fabrication (injectée dans tous les system blocks)
 # ──────────────────────────────────────────────────────────────
-FACTUAL_GROUNDING_RULES = """RÈGLES FACTUELLES — INTERDITS ABSOLUS :
+FACTUAL_GROUNDING_RULES = """RÈGLES FACTUELLES — ZÉRO BULLSHIT :
 
 1. ZÉRO chiffre inventé. Si tu cites un chiffre, il DOIT venir de l'article source fourni.
    Pas d'estimation type "800 €", "4h", "73%" sortie de ton imagination.
@@ -93,20 +101,37 @@ FACTUAL_GROUNDING_RULES = """RÈGLES FACTUELLES — INTERDITS ABSOLUS :
    explicitement présenté comme hypothèse.
 
 4. ZÉRO extrapolation technique présentée comme évidence. Si tu fais une affirmation
-   technique qui n'est pas dans l'article, formule-la comme QUESTION ouverte
-   (pas comme fait établi).
+   technique qui n'est pas dans l'article, formule-la comme QUESTION ouverte.
    - INTERDIT : "Dès que tu branches X à tes données, tu passes sur l'API."
    - AUTORISÉ : "Comment ton équipe va y accéder concrètement ? À voir."
 
-5. CE QUE TU PEUX FAIRE :
-   - Commenter / analyser le contenu de l'article source
-   - Citer des CHIFFRES PRÉSENTS dans l'article (verbatim)
-   - Parler des DOULEURS GÉNÉRALES de l'audience (qu'elle vit déjà, sans nom propre)
-   - Donner un angle, une opinion, un cadre de réflexion
-   - Poser des questions au lecteur ("Tu as déjà eu ce souci ?")
+5. ZÉRO OPINION NON MARQUÉE. Si tu énonces une opinion ou une affirmation qui n'est
+   PAS dans l'article (durée typique d'un projet, niveau de complexité, classement
+   "le cas le plus X", jugement de valeur), tu DOIS soit :
+   (a) la PRÉFIXER par un marqueur d'opinion explicite :
+       "D'après ce que je vois sur le terrain...", "À mon avis...",
+       "Sur les projets que je croise...", "Mon retour..."
+   (b) la TRANSFORMER en question ouverte :
+       "Pourquoi tant de projets IA finance traînent 6 mois ?"
+   (c) la SUPPRIMER si elle n'apporte pas de valeur cadrée.
 
-6. SI tu manques d'éléments factuels pour étayer un point, tu enlèves ce point.
-   Préfère un post court et vrai à un post long et inventé."""
+   EXEMPLES :
+   - INTERDIT : "Ce n'est pas un projet de 6 mois." (assertion non sourcée)
+   - AUTORISÉ : "À mon avis, ce n'est pas un projet de 6 mois."
+   - AUTORISÉ : "Combien de temps pour automatiser ça ? Spoiler : moins que tu crois."
+
+   - INTERDIT : "L'un des cas les plus directs pour Codex."
+   - AUTORISÉ : "Sur les projets que je vois passer, c'est l'un des cas les plus directs."
+
+6. CE QUE TU PEUX FAIRE SANS MARQUAGE :
+   - Commenter / résumer / analyser le contenu de l'article (factuel sourcé)
+   - Citer des CHIFFRES PRÉSENTS dans l'article (verbatim)
+   - Décrire les DOULEURS GÉNÉRALES de l'audience (qu'elle vit déjà)
+   - Poser des questions au lecteur ("Tu as déjà eu ce souci ?")
+   - Donner un cadre de réflexion neutre ("3 questions à poser avant de te lancer")
+
+7. SI tu manques d'éléments factuels OU d'opinion légitime pour étayer un point,
+   tu enlèves ce point. Préfère un post court et vrai à un post long et fabriqué."""
 
 # ──────────────────────────────────────────────────────────────
 # Voice rules
