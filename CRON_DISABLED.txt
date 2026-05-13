@@ -19,12 +19,9 @@
 # SHELL=/bin/bash
 # HOME=/home/victormoi
 #
-# ── Posts carousel ──────────────────────────────────────────────────
-# Mardi 10h30 — mode evergreen (cible PME, angle business prospect)
-# 30 10 * * 2 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
-#
-# Jeudi 10h30 — mode veille (cible devs/CTOs, angle technique)
-# 30 10 * * 4 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+# ── Posts evergreen prospect ────────────────────────────────────────
+# Mardi + jeudi 10h30 — angle business systématique, cible décideur PME/CTO
+# 30 10 * * 2,4 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
 #
 # ── Analytics daily ─────────────────────────────────────────────────
 # Tous les jours 21h00 — fetch métriques des 30 derniers jours de posts
@@ -57,6 +54,6 @@
 #                              voir https://support.google.com/accounts/answer/185833
 #
 # Notes :
-# - Mode auto-détecté via weekday dans config.py::current_mode().
+# - 100% evergreen orienté prospect PME/CTO (pas de mode veille tech).
 # - Format auto-décidé par format_selector.py (carousel default, text/poll si streak ≥ 3).
 # - Aucun fallback silencieux : si RSS vide ou pipeline fail → exit non-0.

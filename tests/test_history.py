@@ -8,7 +8,6 @@ class TestRecordPost:
         post_id = history.record_post(
             topic="Test topic",
             slug="test-topic",
-            mode="evergreen",
             format="carousel",
             keywords=["ia", "pme"],
             linkedin_post_id="urn:li:ugcPost:123",
@@ -26,7 +25,6 @@ class TestRecordPost:
         history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=[],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -46,7 +44,6 @@ class TestKeywordOverlap:
         history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=["ia"],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -59,7 +56,6 @@ class TestKeywordOverlap:
         history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=["ia", "claude", "rag"],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -76,7 +72,6 @@ class TestHookVariants:
         post_id = history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=[],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -84,7 +79,7 @@ class TestHookVariants:
         variants = [
             {"formula": "contrarian", "hook": "h1"},
             {"formula": "data", "hook": "h2"},
-            {"formula": "narrative", "hook": "h3"},
+            {"formula": "prospect_question", "hook": "h3"},
         ]
         history.record_hook_variants(
             post_id=post_id,
@@ -105,7 +100,6 @@ class TestAnalytics:
         post_id = history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=[],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -123,7 +117,6 @@ class TestAnalytics:
         history.record_post(
             topic="t",
             slug="s",
-            mode="evergreen",
             format="carousel",
             keywords=[],
             linkedin_post_id="urn:li:ugcPost:1",
@@ -132,7 +125,6 @@ class TestAnalytics:
         history.record_post(
             topic="draft",
             slug="d",
-            mode="evergreen",
             format="carousel",
             keywords=[],
             linkedin_post_id="urn:li:ugcPost:2",
@@ -151,11 +143,10 @@ class TestFormatHistory:
             history.record_post(
                 topic=f"t{i}",
                 slug=f"s{i}",
-                mode="veille",
                 format=fmt,
                 keywords=[],
                 linkedin_post_id=f"urn:li:ugcPost:{i}",
             )
-        recent = history.recent_formats_for_mode("veille", limit=5)
+        recent = history.recent_formats(limit=5)
         # Plus récent en premier
         assert recent == ["poll", "text", "carousel"]

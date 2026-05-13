@@ -117,8 +117,8 @@ if [ "$NEWS_COUNT" = "0" ]; then
     exit 1
 fi
 
-# ── 2. Génération (6 agents) ────────────────────────────────
-log "[2/4] Generating post (6 agents)…"
+# ── 2. Génération (8 agents) ────────────────────────────────
+log "[2/4] Generating post (8 agents)…"
 RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
 if ! python3 "$DIR/generate_post.py" < "$NEWS_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
     GEN_EXIT=$?
@@ -151,9 +151,8 @@ out = pathlib.Path(sys.argv[2])
 )
 PY
 FORMAT_CHOICE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['format'])" "$POST_DIR/result.json")
-MODE_CHOICE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['mode'])" "$POST_DIR/result.json")
-log "Generated: $POST_DIR (mode=$MODE_CHOICE, format=$FORMAT_CHOICE)"
-metric step "generate" slug "$SLUG" mode "$MODE_CHOICE" format "$FORMAT_CHOICE"
+log "Generated: $POST_DIR (format=$FORMAT_CHOICE)"
+metric step "generate" slug "$SLUG" format "$FORMAT_CHOICE"
 
 # ── 3. PDF carousel (uniquement si format=carousel) ─────────
 EXPECTED_CAROUSEL_FORMAT=$(python3 -c "from config import FORMAT_CAROUSEL; print(FORMAT_CAROUSEL)")
@@ -239,7 +238,6 @@ data = json.load(open(sys.argv[1]))
 post_pk = record_post(
     topic=data["topic"],
     slug=data["slug"],
-    mode=data["mode"],
     format=data["format"],
     keywords=data["keywords"],
     linkedin_post_id=os.environ["POST_ID"],

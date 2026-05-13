@@ -2,9 +2,9 @@
 Historique du pipeline LinkedIn — déduplication, analytics, A/B hooks.
 
 Tables SQLite (DB_PATH = $LINKEDIN_DATA_DIR/history.db) :
-- posts            : 1 ligne par post publié (slug, topic, mode, format, linkedin_id…)
+- posts            : 1 ligne par post publié (slug, topic, format, linkedin_id…)
 - hook_variants    : 1 ligne par hook variation générée (winner=1 pour celle choisie)
-- post_analytics   : (post_id, metric, count, fetched_at) — best-effort métriques LinkedIn
+- post_analytics   : (post_id, metric, count, fetched_at) — métriques LinkedIn best-effort
 - format_history   : trace décisions du format_selector pour la rotation
 """
 
@@ -14,16 +14,12 @@ from datetime import datetime
 
 from config import DB_PATH, MAX_HISTORY_DAYS, SQLITE_TIMEOUT
 
-# ──────────────────────────────────────────────────────────────
-# Schema
-# ──────────────────────────────────────────────────────────────
 SCHEMA = [
     """CREATE TABLE IF NOT EXISTS posts (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         published_at DATETIME NOT NULL,
         topic TEXT NOT NULL,
         slug TEXT NOT NULL,
-        mode TEXT NOT NULL,
         format TEXT NOT NULL,
         keywords TEXT NOT NULL,
         linkedin_post_id TEXT,
@@ -32,7 +28,7 @@ SCHEMA = [
     )""",
     "CREATE INDEX IF NOT EXISTS idx_posts_status_date ON posts(status, published_at)",
     "CREATE INDEX IF NOT EXISTS idx_posts_slug ON posts(slug)",
-    "CREATE INDEX IF NOT EXISTS idx_posts_mode_format ON posts(mode, format)",
+    "CREATE INDEX IF NOT EXISTS idx_posts_format ON posts(format)",
     """CREATE TABLE IF NOT EXISTS hook_variants (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         post_id INTEGER NOT NULL,
@@ -58,11 +54,10 @@ SCHEMA = [
     """CREATE TABLE IF NOT EXISTS format_history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         decided_at DATETIME NOT NULL,
-        mode TEXT NOT NULL,
         format TEXT NOT NULL,
         reason TEXT
     )""",
-    "CREATE INDEX IF NOT EXISTS idx_format_history_mode_date ON format_history(mode, decided_at)",
+    "CREATE INDEX IF NOT EXISTS idx_format_history_date ON format_history(decided_at)",
 ]
 
 
@@ -83,7 +78,6 @@ def record_post(
     *,
     topic: str,
     slug: str,
-    mode: str,
     format: str,
     keywords: list[str],
     linkedin_post_id: str | None = None,
@@ -94,13 +88,12 @@ def record_post(
     with _conn() as conn:
         cur = conn.execute(
             """INSERT INTO posts
-               (published_at, topic, slug, mode, format, keywords, linkedin_post_id, linkedin_comment_id, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (published_at, topic, slug, format, keywords, linkedin_post_id, linkedin_comment_id, status)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 datetime.now().isoformat(),
                 topic,
                 slug,
-                mode,
                 format,
                 json.dumps(keywords, ensure_ascii=False),
                 linkedin_post_id,
@@ -122,6 +115,16 @@ def get_recent_keywords(days: int = MAX_HISTORY_DAYS) -> list[str]:
     for row in rows:
         all_kw.extend(json.loads(row[0]))
     return all_kw
+
+
+def get_recent_slugs(days: int = MAX_HISTORY_DAYS) -> set[str]:
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT slug FROM posts WHERE published_at > datetime('now', ? || ' days') AND status = 'published'",
+            (f"-{days}",),
+        ).fetchall()
+    return {row[0] for row in rows}
 
 
 def keyword_overlap_ratio(new_keywords: list[str], days: int = MAX_HISTORY_DAYS) -> float:
@@ -159,10 +162,9 @@ def count_posts_in_days(days: int = 7) -> int:
 
 
 # ──────────────────────────────────────────────────────────────
-# Hook variants (A/B)
+# Hook variants (A/B learning)
 # ──────────────────────────────────────────────────────────────
 def record_hook_variants(post_id: int, variants: list[dict], winner_formula: str, judge_reason: str) -> None:
-    """variants : [{formula: str, hook: str}, ...]"""
     init_db()
     with _conn() as conn:
         for v in variants:
@@ -179,7 +181,6 @@ def record_hook_variants(post_id: int, variants: list[dict], winner_formula: str
 
 
 def formula_win_rate(days: int = 90) -> dict[str, dict]:
-    """Stats apprentissage : pour chaque formule, combien de fois winner, perf moyenne."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
@@ -211,7 +212,6 @@ def upsert_analytics(post_id: int, metric: str, count: int) -> None:
 
 
 def posts_to_fetch_analytics(days: int = 30) -> list[tuple[int, str]]:
-    """Renvoie [(post_id, linkedin_post_id)] pour les posts publiés des N derniers jours."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
@@ -243,11 +243,10 @@ def latest_analytics(post_id: int) -> dict[str, int]:
 
 
 def posts_in_week(year: int, week: int) -> list[dict]:
-    """Renvoie posts publiés sur la semaine ISO (year, week) avec leurs analytics latest."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
-            """SELECT id, published_at, topic, slug, mode, format, linkedin_post_id
+            """SELECT id, published_at, topic, slug, format, linkedin_post_id
                FROM posts
                WHERE strftime('%Y', published_at) = ?
                  AND strftime('%W', published_at) = ?
@@ -264,9 +263,8 @@ def posts_in_week(year: int, week: int) -> list[dict]:
                 "published_at": r[1],
                 "topic": r[2],
                 "slug": r[3],
-                "mode": r[4],
-                "format": r[5],
-                "linkedin_post_id": r[6],
+                "format": r[4],
+                "linkedin_post_id": r[5],
                 "analytics": analytics,
             }
         )
@@ -274,26 +272,26 @@ def posts_in_week(year: int, week: int) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
-# Format history (rotation)
+# Format history (rotation carousel/text/poll)
 # ──────────────────────────────────────────────────────────────
-def record_format_decision(mode: str, format: str, reason: str) -> None:
+def record_format_decision(format: str, reason: str) -> None:
     init_db()
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO format_history (decided_at, mode, format, reason) VALUES (?, ?, ?, ?)",
-            (datetime.now().isoformat(), mode, format, reason),
+            "INSERT INTO format_history (decided_at, format, reason) VALUES (?, ?, ?)",
+            (datetime.now().isoformat(), format, reason),
         )
 
 
-def recent_formats_for_mode(mode: str, limit: int = 5) -> list[str]:
-    """Renvoie les N derniers formats utilisés pour ce mode, du plus récent au plus ancien."""
+def recent_formats(limit: int = 5) -> list[str]:
+    """Renvoie les N derniers formats utilisés, du plus récent au plus ancien."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
             """SELECT format FROM posts
-               WHERE mode = ? AND status = 'published'
+               WHERE status = 'published'
                ORDER BY published_at DESC
                LIMIT ?""",
-            (mode, limit),
+            (limit,),
         ).fetchall()
     return [r[0] for r in rows]

@@ -1,27 +1,26 @@
 """
 Pipeline 8 agents — génère slides carousel + hook + 1er commentaire LinkedIn.
 
-Modes :
-- evergreen (mardi) : cible PME, angle business prospect
-- veille (jeudi)    : cible devs/CTOs, angle technique terrain
-Mode auto-détecté via weekday, override possible via PIPELINE_MODE env var.
+100% evergreen orienté prospect PME / CTO décisionnaire.
+Pipeline ancré sur l'actualité IA (RSS) avec angle BUSINESS systématique.
 
 Agents :
   1. Pain Excavator        (Sonnet) — 3 douleurs prospect
   2. Angle Scout           (Sonnet) — angle contre-intuitif + hook visuel slide 1
-  3. Slide Architect       (Sonnet) — structure les 7 slides
+  3. Slide Architect       (Sonnet) — structure les slides (5-10, variable)
   4. Victor's Pen          (Sonnet) — réécrit dans la voix de Victor
   5. Anti-AI Detector      (Sonnet) — retry-with-feedback sur patterns interdits
   6. Hook Generator        (Sonnet) — 3 variations de hook texte
   7. Hook Judge            (Haiku)  — sélectionne le winner
-  8. Engagement Comment    (Haiku)  — 1er commentaire (question + lien profil)
+  8. CTA Comment           (Haiku)  — 1er commentaire CTA (action + bénéfice + lien)
 
 Patterns :
-- tool_use + JSON Schema forcé sur tous les agents → 0 parsing libre
+- tool_use + JSON Schema forcé → 0 parsing libre
 - Sonnet pour créativité, Haiku pour sélection/structure → -30% tokens
 - retry-with-feedback sur Anti-AI Detector
 - dédup keyword overlap par itération sur les news RSS
 - 0 fallback silencieux : NoUsableNewsError si aucune news exploitable
+- 0 fabrication : règle FACTUAL_GROUNDING_RULES dans system block 2
 """
 
 import json
@@ -35,7 +34,7 @@ from config import (
     CTA_POST_SUFFIX,
     CTA_SLIDE_TEXT,
     HAIKU_MODEL,
-    HASHTAGS_BY_MODE,
+    HASHTAGS,
     HOOK_VARIATIONS_COUNT,
     KEYWORD_OVERLAP_THRESHOLD,
     MAX_DETECTOR_RETRIES,
@@ -45,7 +44,6 @@ from config import (
     SLIDE_COUNT_TARGET,
     SONNET_MODEL,
     TOKEN_BUDGETS,
-    current_mode,
     system_voice,
 )
 from format_selector import select_format
@@ -129,9 +127,6 @@ HOOK_VARIANTS_TOOL = {
                     "properties": {
                         "formula": {
                             "type": "string",
-                            # contrarian = challenge l'idée reçue dominante dans l'article
-                            # data = cite un chiffre PRÉSENT dans l'article (verbatim)
-                            # prospect_question = pose une question aux douleurs de l'audience
                             "enum": ["contrarian", "data", "prospect_question"],
                         },
                         "hook": {
@@ -186,11 +181,11 @@ CTA_COMMENT_TOOL = {
 # ──────────────────────────────────────────────────────────────
 # Agents
 # ──────────────────────────────────────────────────────────────
-def agent1_pain_excavator(article_ctx: str, mode: str) -> list[str]:
+def agent1_pain_excavator(article_ctx: str) -> list[str]:
     """Identifie 3 douleurs RÉELLES du prospect, à la lecture de l'article."""
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             "Mets-toi dans la tête de l'AUDIENCE (cf. system). Cette personne lit l'article ci-dessus.\n\n"
@@ -207,46 +202,47 @@ def agent1_pain_excavator(article_ctx: str, mode: str) -> list[str]:
     return out["pains"]
 
 
-def agent2_angle_scout(article_ctx: str, pains: list[str], mode: str) -> dict:
-    """Trouve un angle de commentaire éditorial sur l'article, ancré sur les douleurs prospect."""
+def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
+    """Trouve un angle éditorial business, ancré sur les douleurs prospect."""
     return call_tool(
         model=SONNET_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             "Douleurs prospect identifiées :\n- " + "\n- ".join(pains) + "\n\n"
             "Trouve l'angle éditorial qui :\n"
             "1. COMMENTE l'article (pas raconte une histoire perso fictive)\n"
-            "2. PARLE aux douleurs ci-dessus du prospect\n"
-            "3. SURPREND ou contredit une idée reçue largement répandue dans l'audience\n\n"
+            "2. PARLE aux douleurs ci-dessus du décideur\n"
+            "3. SURPREND ou contredit une idée reçue largement répandue dans l'audience business\n\n"
             "Hook visuel : première ligne du carrousel (slide 1), max 8 mots, percutante. "
-            "Doit interpeller le lecteur, PAS raconter Victor."
+            "Doit interpeller le décideur, PAS raconter Victor."
         ),
         tool=ANGLE_TOOL,
         max_tokens=TOKEN_BUDGETS["angle"],
     )
 
 
-def agent3_slide_architect(article_ctx: str, angle: dict, mode: str) -> list[dict]:
-    """Structure les 7 slides en commentant l'article pour le prospect."""
+def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
+    """Structure les slides en commentant l'article pour le décideur."""
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             f"Angle retenu : {angle['angle']}\n"
             f"Hook slide 1 : {angle['hook']}\n\n"
             f"Structure un carrousel LinkedIn entre {SLIDE_COUNT_MIN} et {SLIDE_COUNT_MAX} slides "
-            f"(cible idéale : {SLIDE_COUNT_TARGET}) QUI COMMENTE L'ARTICLE pour le prospect.\n\n"
-            "Le nombre dépend du contenu :\n"
-            f"- {SLIDE_COUNT_MIN}-6 slides si le sujet est simple et peut être dit en peu de points\n"
+            f"(cible idéale : {SLIDE_COUNT_TARGET}) QUI COMMENTE L'ARTICLE pour le décideur.\n\n"
+            "Le nombre de slides dépend du contenu :\n"
+            f"- {SLIDE_COUNT_MIN}-6 slides si le sujet est simple\n"
             "- 7-8 slides pour un sujet riche avec plusieurs implications\n"
-            f"- 9-{SLIDE_COUNT_MAX} slides UNIQUEMENT si vraiment nécessaire (sujet dense)\n\n"
+            f"- 9-{SLIDE_COUNT_MAX} slides UNIQUEMENT si vraiment nécessaire\n\n"
             "Structure type :\n"
             "- Slide 1 : Hook visuel (utilise exactement la phrase fournie)\n"
             "- Slide 2 : Ce que l'article annonce, en 1 phrase clé (résumé factuel sans invention)\n"
-            "- Slides intermédiaires : implications CONCRÈTES pour le prospect (douleurs, choix, coût)\n"
-            "- Avant-dernière slide : Recommandation actionnable (cadre de réflexion, pas anecdote)\n"
+            "- Slides intermédiaires : implications BUSINESS pour le décideur "
+            "(ROI, coût, risque, équipe, conformité)\n"
+            "- Avant-dernière slide : Recommandation actionnable (cadre de décision)\n"
             f"- DERNIÈRE slide : CTA — DOIT contenir '{CTA_SLIDE_TEXT}'\n\n"
             "Chaque slide = 1 idée. main = phrase punchy ; sub = développement court (optionnel).\n"
             "Privilégie un carrousel COURT et DENSE plutôt que long et délayé.\n"
@@ -259,7 +255,7 @@ def agent3_slide_architect(article_ctx: str, angle: dict, mode: str) -> list[dic
     return out["slides"]
 
 
-def agent4_victors_pen(article_ctx: str, slides_outline: list[dict], mode: str) -> list[dict]:
+def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dict]:
     """Réécrit dans la voix de Victor SANS introduire d'invention."""
     outline_str = "\n".join(
         f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
@@ -267,13 +263,13 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict], mode: str) 
     )
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             "Réécris ce carrousel dans la voix exacte de Victor (cf. règles voix dans system).\n\n"
             "PRÉSERVE :\n"
-            "- la structure des 7 slides\n"
-            "- l'angle, le hook slide 1, le CTA final slide 7\n"
+            "- la structure des slides (même nombre, même ordre)\n"
+            "- l'angle, le hook slide 1, le CTA final\n"
             "- les faits de l'article source (rien d'autre comme source factuelle)\n\n"
             "MODIFIE :\n"
             "- le phrasé pour matcher la voix orale + courte de Victor\n\n"
@@ -293,8 +289,8 @@ def _detect_violations(slides: list[dict]) -> list[str]:
     return [p for p in ANTI_AI_PATTERNS if p in text]
 
 
-def agent5_anti_ai_detector(slides: list[dict], mode: str) -> list[dict]:
-    """Retry-with-feedback (CCA-F D4 §4) : on re-prompt avec les violations explicites."""
+def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
+    """Retry-with-feedback (CCA-F D4 §4) : re-prompt avec les violations explicites."""
     current = slides
     for attempt in range(MAX_DETECTOR_RETRIES + 1):
         violations = _detect_violations(current)
@@ -310,7 +306,7 @@ def agent5_anti_ai_detector(slides: list[dict], mode: str) -> list[dict]:
         )
         out = call_tool(
             model=SONNET_MODEL,
-            system=system_voice(mode),
+            system=system_voice(),
             user_text=(
                 "Le draft ci-dessous contient encore des patterns interdits.\n"
                 f"PATTERNS DÉTECTÉS À ÉLIMINER : {violations_str}\n\n"
@@ -324,17 +320,12 @@ def agent5_anti_ai_detector(slides: list[dict], mode: str) -> list[dict]:
     return current
 
 
-def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict], mode: str) -> list[dict]:
-    """Génère 3 variations de hook texte du post (1 par formule).
-
-    Best practice 2026 : drafter 3-7 hooks avant de choisir
-    (winning hook != first idea).
-    Les 3 formules sont conçues pour PARLER au prospect, pas raconter Victor.
-    """
+def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> list[dict]:
+    """Génère 3 variations de hook texte (1 par formule)."""
     slides_summary = " | ".join(s["main"] for s in slides[:4])
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             f"Angle : {angle['angle']}\n"
@@ -346,10 +337,9 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict], mod
             "- contrarian       : challenge une idée reçue du marché ou de l'article.\n"
             "                     Ex : 'Tout le monde pense que X. L'annonce d'hier dit l'inverse.'\n\n"
             "- data             : cite UN chiffre PRÉSENT dans l'article + son implication.\n"
-            "                     Ex : '{chiffre verbatim de l'article}. Voici pourquoi ça change [enjeu prospect].'\n"
-            "                     SI l'article n'a pas de chiffre exploitable, écris une statistique générale "
-            "                     bien connue + source implicite ('rapport McKinsey', 'étude Gartner'). "
-            "                     N'invente JAMAIS un chiffre précis (pas de '73%' sorti de nulle part).\n\n"
+            "                     SI l'article n'a pas de chiffre exploitable, n'utilise PAS cette formule "
+            "                     (laisse vide ou propose une variante du contrarian).\n"
+            "                     N'invente JAMAIS un chiffre précis (pas de '73%' ou 'McKinsey' sortis de nulle part).\n\n"
             "- prospect_question : pose une question qui résonne avec une douleur du prospect.\n"
             "                     Ex : 'Tu hésites encore avec X pour ton projet IA ? L'annonce d'hier "
             "                     pourrait te faire reconsidérer.'\n\n"
@@ -366,19 +356,12 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict], mod
     return out["variants"]
 
 
-def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict, mode: str) -> dict:
-    """Sélectionne le hook winner parmi les 3 variations.
-
-    Critères : stoppe le scroll, ne sonne pas IA, tient sa promesse,
-    matche l'audience du mode (PME vs dev).
-
-    Modèle : Haiku 4.5 (sélection, pas génération créative → 67% moins cher
-    que Sonnet sans perte de qualité sur ce type de tâche).
-    """
+def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> dict:
+    """Sélectionne le hook winner parmi les 3 variations (Haiku)."""
     variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
     out = call_tool(
         model=HAIKU_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             f"Angle du post : {angle['angle']}\n\n"
@@ -391,7 +374,7 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict, mode:
             "3. PARLE au lecteur (pas anecdote perso fictive type 'Mardi dernier j'ai...'). "
             "   Si un hook raconte la vie de Victor de façon non sourcée, RECALE-le.\n"
             "4. TIENT sa promesse vis-à-vis du contenu du post (l'algo 2026 pénalise les hooks clickbait)\n"
-            "5. MATCH l'audience (cf. system)\n\n"
+            "5. MATCH l'audience décideur PME (pas trop technique)\n\n"
             "Renvoie la formule winner + 1-2 phrases de justification."
         ),
         tool=HOOK_JUDGE_TOOL,
@@ -400,17 +383,11 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict, mode:
     return out
 
 
-def agent8_cta_comment(article_ctx: str, angle: dict, mode: str) -> str:
-    """Écrit le 1er commentaire = CTA direct sous le post.
-
-    Best practice 2026 : pas un teaser inventé, pas juste un lien (pénalisé).
-    C'est un CTA orienté ACTION + bénéfice clair pour le prospect.
-
-    Modèle : Haiku 4.5 (texte court 200-400 chars, structure simple).
-    """
+def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
+    """1er commentaire = CTA direct sous le post (Haiku)."""
     out = call_tool(
         model=HAIKU_MODEL,
-        system=system_voice(mode),
+        system=system_voice(),
         user_text=(
             f"{article_ctx}\n\n"
             f"Angle du post : {angle['angle']}\n\n"
@@ -432,7 +409,7 @@ def agent8_cta_comment(article_ctx: str, angle: dict, mode: str) -> str:
 
 
 # ──────────────────────────────────────────────────────────────
-# Helpers
+# Helpers (keywords, slug, formatting)
 # ──────────────────────────────────────────────────────────────
 _STOPWORDS = {
     "pour",
@@ -519,13 +496,16 @@ def flatten_slides_to_strings(slides: list[dict]) -> list[str]:
     return [s["main"] + ("\n" + s["sub"] if s.get("sub") else "") for s in slides]
 
 
+CTA_MARKER = "dm"
+
+
 def ensure_cta(slides: list[dict]) -> list[dict]:
     """Garantit que la dernière slide contient le CTA."""
     if not slides:
         return slides
     last = slides[-1]
     combined = (last.get("main", "") + " " + last.get("sub", "")).lower()
-    if "dm" not in combined and "discuter" not in combined:
+    if CTA_MARKER not in combined and "discuter" not in combined:
         existing_sub = last.get("sub", "").strip()
         last["sub"] = (existing_sub + " " + CTA_SLIDE_TEXT).strip() if existing_sub else CTA_SLIDE_TEXT
     return slides
@@ -547,28 +527,27 @@ def _news_to_topic(news: dict) -> str:
 
 
 def _article_context(news: dict) -> str:
-    """Construit le bloc 'ARTICLE SOURCE' grounding fourni à tous les agents.
-
-    Tout ce qui n'est pas dans ce bloc est considéré comme NON FACTUEL pour les agents.
-    """
+    """Construit le bloc 'ARTICLE SOURCE' grounding fourni à tous les agents."""
     title = (news.get("title") or "").strip()
     url = (news.get("url") or "").strip()
     source = (news.get("source") or "").strip()
     summary = (news.get("summary") or "").strip()
     content = (news.get("content") or "").strip()
     body = content if content else summary
+    body_text = (
+        body if body else "(pas de contenu détaillé — base-toi uniquement sur le titre, n'invente rien)"
+    )
     return (
         "═══ ARTICLE SOURCE (seule base factuelle autorisée) ═══\n"
         f"Source : {source}\n"
         f"Titre  : {title}\n"
         f"URL    : {url}\n"
-        f"Contenu :\n{body if body else '(pas de contenu détaillé — ne fabule pas, base-toi uniquement sur le titre)'}\n"
+        f"Contenu :\n{body_text}\n"
         "═══════════════════════════════════════════════════"
     )
 
 
 def _normalize_news_input(topic_input) -> list[dict]:
-    """Accepte : list[dict] (RSS output) | dict (1 news) | str (legacy)."""
     if topic_input is None:
         return []
     if isinstance(topic_input, list):
@@ -580,30 +559,25 @@ def _normalize_news_input(topic_input) -> list[dict]:
     return []
 
 
-def _run_once(article_ctx: str, mode: str) -> tuple[list[dict], dict]:
-    print(f"[mode={mode}] [agent1] Pain excavator…", file=sys.stderr)
-    pains = agent1_pain_excavator(article_ctx, mode)
-
+def _run_once(article_ctx: str) -> tuple[list[dict], dict]:
+    print("[agent1] Pain excavator…", file=sys.stderr)
+    pains = agent1_pain_excavator(article_ctx)
     print("[agent2] Angle scout…", file=sys.stderr)
-    angle = agent2_angle_scout(article_ctx, pains, mode)
-
+    angle = agent2_angle_scout(article_ctx, pains)
     print("[agent3] Slide architect…", file=sys.stderr)
-    outline = agent3_slide_architect(article_ctx, angle, mode)
-
+    outline = agent3_slide_architect(article_ctx, angle)
     print("[agent4] Victor's pen…", file=sys.stderr)
-    draft = agent4_victors_pen(article_ctx, outline, mode)
-
+    draft = agent4_victors_pen(article_ctx, outline)
     print("[agent5] Anti-AI detector…", file=sys.stderr)
-    final = agent5_anti_ai_detector(draft, mode)
+    final = agent5_anti_ai_detector(draft)
     return final, angle
 
 
-def generate(topic_input=None, mode: str | None = None) -> dict:
+def generate(topic_input=None) -> dict:
     """
     Génère un post à partir d'une OU plusieurs news RSS.
     Aucun fallback silencieux : si aucune news n'est exploitable, raise NoUsableNewsError.
     """
-    mode = current_mode(mode)
     news_list = _normalize_news_input(topic_input)
     if not news_list:
         raise NoUsableNewsError(
@@ -616,14 +590,14 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
     angle: dict = {}
     keywords: list[str] = []
     topic: str = ""
-
     article_ctx_winner = ""
+
     for idx, news in enumerate(news_list):
         topic = _news_to_topic(news)
         article_ctx = _article_context(news)
         print(f"[generate] trying news {idx + 1}/{len(news_list)}: {topic[:80]}", file=sys.stderr)
         try:
-            slides, angle = _run_once(article_ctx, mode)
+            slides, angle = _run_once(article_ctx)
         except Exception as e:
             last_error = f"news {idx}: {e}"
             print(f"[generate] run failed on news {idx + 1}: {e}", file=sys.stderr)
@@ -641,7 +615,6 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
         )
         last_error = f"news {idx} too similar to recent (overlap={overlap:.2f})"
     else:
-        # Toutes les news ont overlap trop haut ou ont fail
         raise NoUsableNewsError(
             f"Aucune des {len(news_list)} news RSS n'est exploitable. Dernier motif : {last_error}"
         )
@@ -649,18 +622,18 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
     slides = ensure_cta(slides)
 
     print("[agent6] Hook generator (3 variants)…", file=sys.stderr)
-    variants = agent6_hook_generator(article_ctx_winner, angle, slides, mode)
+    variants = agent6_hook_generator(article_ctx_winner, angle, slides)
 
     print("[agent7] Hook judge…", file=sys.stderr)
-    judge = agent7_hook_judge(article_ctx_winner, variants, angle, mode)
+    judge = agent7_hook_judge(article_ctx_winner, variants, angle)
     winner_formula = judge["winner_formula"]
     winner_variant = next((v for v in variants if v["formula"] == winner_formula), variants[0])
 
     print("[agent8] CTA comment writer…", file=sys.stderr)
-    first_comment = agent8_cta_comment(article_ctx_winner, angle, mode)
+    first_comment = agent8_cta_comment(article_ctx_winner, angle)
 
     # Décide du format pour cette publication (carousel / text / poll)
-    format_choice, format_reason = select_format(mode)
+    format_choice, format_reason = select_format()
     print(f"[format] {format_choice} — {format_reason}", file=sys.stderr)
 
     slug = (
@@ -669,11 +642,9 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
         or f"post-{int(time.time())}"
     )
     slides_str = flatten_slides_to_strings(slides)
-
-    post_text = f"{winner_variant['hook'].strip()}\n\n{CTA_POST_SUFFIX}\n\n{HASHTAGS_BY_MODE[mode]}"
+    post_text = f"{winner_variant['hook'].strip()}\n\n{CTA_POST_SUFFIX}\n\n{HASHTAGS}"
 
     return {
-        "mode": mode,
         "format": format_choice,
         "format_reason": format_reason,
         "topic": topic[:120],
@@ -694,13 +665,11 @@ def generate(topic_input=None, mode: str | None = None) -> dict:
 
 # ──────────────────────────────────────────────────────────────
 # CLI : lit OBLIGATOIREMENT une liste de news JSON depuis stdin.
-# Echec explicite si stdin vide, JSON invalide, ou liste vide.
 # ──────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     if sys.stdin.isatty():
         print(
-            "[generate] ERROR: no stdin. This script reads RSS news (JSON list) from stdin. "
-            "Usage: python rss_fetch.py | python generate_post.py",
+            "[generate] ERROR: no stdin. Usage: python rss_fetch.py | python generate_post.py",
             file=sys.stderr,
         )
         sys.exit(2)

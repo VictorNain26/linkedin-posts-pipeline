@@ -1,18 +1,17 @@
 """
 Configuration centrale du pipeline LinkedIn posts.
 
-Architecture :
-- 2 modes complémentaires : "evergreen" (mardi, cible PME) et "veille" (jeudi, cible devs).
-- System blocks partagés entre 8 agents par run (caching documenté dans system_voice).
-- Token budgets explicites par agent (évite de payer pour des max_tokens non utilisés).
+Architecture single-mode :
+- 100% evergreen orienté prospect PME / CTO décisionnaire
+- Pipeline ancré sur l'actualité IA (RSS) avec angle BUSINESS systématique
+- Pas de mode "veille tech" — la cible n'est pas le dev curieux mais le décideur
 """
 
-import datetime
 import os
 from pathlib import Path
 
 # ──────────────────────────────────────────────────────────────
-# Models
+# Models Anthropic
 # ──────────────────────────────────────────────────────────────
 SONNET_MODEL = "claude-sonnet-4-6"
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
@@ -24,11 +23,10 @@ TOKEN_BUDGETS = {
     "architect": 1200,
     "pen": 1500,
     "detector": 1500,
-    "hook_generator": 800,  # génère 3 variations en 1 call
-    "hook_judge": 300,  # choisit la meilleure
-    "comment_writer": 400,  # 1er commentaire d'engagement
-    "format_picker": 200,  # facultatif : decide_format via LLM (sinon règle)
-    "weekly_report": 2000,  # synthèse rapport hebdo
+    "hook_generator": 800,
+    "hook_judge": 300,
+    "comment_writer": 400,
+    "weekly_report": 2000,
 }
 
 # ──────────────────────────────────────────────────────────────
@@ -44,72 +42,41 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 LOG_DIR.mkdir(exist_ok=True)
 
 # ──────────────────────────────────────────────────────────────
-# Sources RSS (veille)
-# ──────────────────────────────────────────────────────────────
-# Sources RSS curées (mai 2026) — best practice : petit stack, signal haut.
+# Sources RSS — best practice 2026 : petit stack, signal haut
 # Source : https://daige.st/en/blog/best-tech-rss-feeds-2026
 # Audit : URLs vérifiées 2026-05-13, summaries OK sur les 3.
+# ──────────────────────────────────────────────────────────────
 RSS_SOURCES = [
-    # Officiel OpenAI — modèle leader marché, summaries OK
+    # Officiel OpenAI — modèle leader marché
     "https://openai.com/news/rss.xml",
     # Officiel Anthropic via community mirror (pas de feed officiel en 2026)
     "https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml",
-    # Pragmatic Engineer — adoption IA en équipes engineering (cible CTO/tech lead PME)
+    # Pragmatic Engineer — adoption IA en équipes engineering (signal CTO)
     "https://newsletter.pragmaticengineer.com/feed",
 ]
 RSS_FETCH_TIMEOUT = 10
 RSS_LOOKBACK_HOURS = 48
-RSS_ARTICLE_FETCH_TIMEOUT = 15  # WebFetch sur les URLs articles
-RSS_ARTICLE_MAX_CHARS = 4000  # cap pour éviter blowup tokens
+RSS_ARTICLE_FETCH_TIMEOUT = 15
+RSS_ARTICLE_MAX_CHARS = 4000
 
 # ──────────────────────────────────────────────────────────────
-# Modes : evergreen (mardi, PME) vs veille (jeudi, devs)
+# Audience cible — unique
 # ──────────────────────────────────────────────────────────────
-MODE_EVERGREEN = "evergreen"
-MODE_VEILLE = "veille"
-
-# Mardi = 1, Jeudi = 3 (weekday ISO)
-MODE_BY_WEEKDAY = {
-    1: MODE_EVERGREEN,
-    3: MODE_VEILLE,
-}
-
-
-def current_mode(override: str | None = None) -> str:
-    """Choisit le mode selon le weekday, ou via override env / arg."""
-    if override:
-        return override
-    env_mode = os.environ.get("PIPELINE_MODE")
-    if env_mode:
-        return env_mode
-    return MODE_BY_WEEKDAY.get(datetime.date.today().weekday(), MODE_EVERGREEN)
-
-
-# ──────────────────────────────────────────────────────────────
-# Audience par mode (utilisé dans les system blocks)
-# ──────────────────────────────────────────────────────────────
-AUDIENCE_DESC = {
-    MODE_EVERGREEN: (
-        "AUDIENCE : dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA "
-        "dans leur produit ou leurs process métier.\n"
-        "Vocabulaire BUSINESS, pas technique. Sensibles au ROI, au time-to-value, "
-        "aux risques (coût, lock-in, hallucinations, dépendance).\n\n"
-        "ANGLE : tu pars d'un ARTICLE IA fraîchement publié et tu commentes pour ce dirigeant. "
-        "Question centrale : \"qu'est-ce que cette annonce change concrètement pour lui ?\"\n"
-        "Réponds avec ses DOULEURS RÉELLES (budget IA flou, peur du lock-in fournisseur, "
-        "ROI incertain, mise en prod fragile, équipe pas formée), pas avec une histoire fictive."
-    ),
-    MODE_VEILLE: (
-        "AUDIENCE : développeurs, tech leads et CTOs qui implémentent de l'IA dans des apps web.\n"
-        "Vocabulaire technique OK (SDK, LLM, RAG, agents, MCP, tool use). "
-        "Sensibles au gain de productivité, aux pièges d'intégration, aux comparaisons d'outils.\n\n"
-        "ANGLE : tu pars d'un ARTICLE IA fraîchement publié et tu commentes pour ce dev. "
-        "Question centrale : \"qu'est-ce que cette annonce change pour quelqu'un qui code "
-        "des intégrations IA aujourd'hui ?\"\n"
-        "Réponds avec ses DOULEURS RÉELLES (choix de stack, intégration fragile, doc obsolète, "
-        "modèles incompatibles, coûts API qui dérivent), pas avec une histoire fictive."
-    ),
-}
+AUDIENCE_DESC = (
+    "AUDIENCE : dirigeants de PME et CTOs français qui envisagent d'intégrer "
+    "l'IA dans leur produit ou leurs process métier. Décideurs ou co-décideurs "
+    "sur le choix des outils et des prestataires.\n"
+    "Vocabulaire BUSINESS, pas technique. Sensibles au ROI, au time-to-value, "
+    "aux risques (coût, lock-in, hallucinations, dépendance, conformité RGPD).\n\n"
+    "ANGLE OBLIGATOIRE : tu pars d'un ARTICLE IA fraîchement publié et tu le commentes "
+    "pour ce décideur. Question centrale : \"qu'est-ce que cette annonce change "
+    'concrètement pour son entreprise ?"\n'
+    "Réponds avec ses DOULEURS RÉELLES (budget IA flou, peur du lock-in fournisseur, "
+    "ROI incertain, mise en prod fragile, équipe pas formée, conformité, coûts cachés), "
+    "pas avec une histoire fictive.\n\n"
+    "INTERDIT : jargon technique inutile (API/UI/SDK/RAG) sans explication accessible. "
+    "Si un terme technique est nécessaire, explique-le en une phrase ou évite-le."
+)
 
 # ──────────────────────────────────────────────────────────────
 # Règle anti-fabrication (injectée dans tous les system blocks)
@@ -125,18 +92,24 @@ FACTUAL_GROUNDING_RULES = """RÈGLES FACTUELLES — INTERDITS ABSOLUS :
 3. ZÉRO situation fictive. Pas de scénario imaginaire ("Imagine que tu...") qui n'est pas
    explicitement présenté comme hypothèse.
 
-4. CE QUE TU PEUX FAIRE :
+4. ZÉRO extrapolation technique présentée comme évidence. Si tu fais une affirmation
+   technique qui n'est pas dans l'article, formule-la comme QUESTION ouverte
+   (pas comme fait établi).
+   - INTERDIT : "Dès que tu branches X à tes données, tu passes sur l'API."
+   - AUTORISÉ : "Comment ton équipe va y accéder concrètement ? À voir."
+
+5. CE QUE TU PEUX FAIRE :
    - Commenter / analyser le contenu de l'article source
    - Citer des CHIFFRES PRÉSENTS dans l'article (verbatim)
    - Parler des DOULEURS GÉNÉRALES de l'audience (qu'elle vit déjà, sans nom propre)
    - Donner un angle, une opinion, un cadre de réflexion
    - Poser des questions au lecteur ("Tu as déjà eu ce souci ?")
 
-5. SI tu manques d'éléments factuels pour étayer un point, tu enlèves ce point.
+6. SI tu manques d'éléments factuels pour étayer un point, tu enlèves ce point.
    Préfère un post court et vrai à un post long et inventé."""
 
 # ──────────────────────────────────────────────────────────────
-# Voice rules (constant, cacheable)
+# Voice rules
 # ──────────────────────────────────────────────────────────────
 VOICE_RULES = """Tu écris comme Victor Lenain, développeur freelance full-stack + intégration IA à Paris.
 
@@ -170,21 +143,19 @@ ANTI_AI_PATTERNS = [
 ]
 
 
-def system_voice(mode: str) -> list[dict]:
-    """System blocks par mode.
+def system_voice() -> list[dict]:
+    """System blocks (3 segments) — partagés par tous les agents.
 
-    Structure :
-    - Bloc 1 : identité + audience + angle prospect
-    - Bloc 2 : règles factuelles anti-fabrication
-    - Bloc 3 : règles de voix Victor + anti-AI patterns
+    1. Identité + audience cible (décideur PME/CTO)
+    2. Règles factuelles anti-fabrication
+    3. Règles de voix Victor + anti-AI patterns
     """
     return [
         {
             "type": "text",
             "text": (
                 "Tu es un assistant qui produit du contenu LinkedIn pour Victor Lenain, "
-                "développeur freelance full-stack + intégration IA basé à Paris.\n\n"
-                + AUDIENCE_DESC[mode]
+                "développeur freelance full-stack + intégration IA basé à Paris.\n\n" + AUDIENCE_DESC
             ),
         },
         {
@@ -201,12 +172,9 @@ def system_voice(mode: str) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
-# Hashtags par mode (3-5 hyper-ciblés, best practice 2026)
+# Hashtags — unique set business prospect
 # ──────────────────────────────────────────────────────────────
-HASHTAGS_BY_MODE = {
-    MODE_EVERGREEN: "#IntégrationIA #PME #IA #Productivité #Freelance",
-    MODE_VEILLE: "#IA #LLM #Claude #IntégrationIA #DevFreelance",
-}
+HASHTAGS = "#IntégrationIA #PME #IA #Productivité #Freelance"
 
 # ──────────────────────────────────────────────────────────────
 # CTA texte (tenable, pas de promesse d'article fantôme)
@@ -221,19 +189,38 @@ FORMAT_CAROUSEL = "carousel"
 FORMAT_TEXT = "text"
 FORMAT_POLL = "poll"
 
-# Stratégie de rotation des formats (best practice 2026 : varier 1x/2sem)
-# - evergreen (mardi) : toujours carousel — format core pour PME prospects
-# - veille (jeudi)    : carousel par défaut, mais on switch text/poll
-#   si >= MAX_SAME_FORMAT_STREAK carousels veille publiés à la suite.
+# Rotation des formats — best practice 2026 : varier 1x/2sem.
+# Default = carousel ; on switch text/poll après MAX_SAME_FORMAT_STREAK carrousels consécutifs.
 MAX_SAME_FORMAT_STREAK = 3
 
 # Carousel format (best practice 2026 : portrait 4:5).
-# Dimensions effectives en dur dans html_to_pdf.js (1080x1350) — pas exposées
-# côté Python car aucun module Python ne les consomme.
-# Slide count variable : l'agent Architect décide selon le besoin du contenu.
 SLIDE_COUNT_MIN = 5
 SLIDE_COUNT_MAX = 10
-SLIDE_COUNT_TARGET = 7  # sweet spot 2026 (référence pour le prompt)
+SLIDE_COUNT_TARGET = 7
+
+# ──────────────────────────────────────────────────────────────
+# A/B hooks
+# ──────────────────────────────────────────────────────────────
+HOOK_VARIATIONS_COUNT = 3
+
+# ──────────────────────────────────────────────────────────────
+# 1er commentaire d'engagement (CTA)
+# ──────────────────────────────────────────────────────────────
+FIRST_COMMENT_DELAY_SECONDS = 30
+PROFILE_URL = "https://victorlenain.fr"
+
+# ──────────────────────────────────────────────────────────────
+# LinkedIn API versioning
+# ──────────────────────────────────────────────────────────────
+LINKEDIN_API_VERSION = "202604"
+
+# ──────────────────────────────────────────────────────────────
+# Analytics & rapport hebdo
+# ──────────────────────────────────────────────────────────────
+ANALYTICS_LOOKBACK_DAYS = 30
+WEEKLY_REPORT_RECIPIENT = os.environ.get("WEEKLY_REPORT_TO", "victor.lenain26@gmail.com")
+GMAIL_SMTP_SERVER = "smtp.gmail.com"
+GMAIL_SMTP_PORT = 587
 
 # ──────────────────────────────────────────────────────────────
 # Pipeline tuning
@@ -241,22 +228,6 @@ SLIDE_COUNT_TARGET = 7  # sweet spot 2026 (référence pour le prompt)
 MAX_HISTORY_DAYS = 90
 KEYWORD_OVERLAP_THRESHOLD = 0.4
 MAX_DETECTOR_RETRIES = 2
-
-# A/B hooks
-HOOK_VARIATIONS_COUNT = 3  # contrarian + data + narrative
-
-# 1er commentaire d'engagement
-FIRST_COMMENT_DELAY_SECONDS = 30  # delay après le post (paraître naturel)
-PROFILE_URL = "https://victorlenain.fr"
-
-# LinkedIn API versioning
-LINKEDIN_API_VERSION = "202604"  # bump tous les ~3 mois (cf. Microsoft Learn)
-
-# Analytics & rapport hebdo
-ANALYTICS_LOOKBACK_DAYS = 30
-WEEKLY_REPORT_RECIPIENT = os.environ.get("WEEKLY_REPORT_TO", "victor.lenain26@gmail.com")
-GMAIL_SMTP_SERVER = "smtp.gmail.com"
-GMAIL_SMTP_PORT = 587
 
 # API resilience
 ANTHROPIC_MAX_ATTEMPTS = 3
