@@ -22,12 +22,10 @@ function escapeHtml(str) {
 }
 
 function slideClass(i, total) {
-  // Pattern interrupt sur la slide du milieu (réveille l'oeil après scroll initial)
-  // Source : design 2026 — switching bg light/dark mid-carousel = -31% drop-off
-  const middleIdx = Math.floor((total - 1) / 2);
+  // Toujours fond dark — pas de pattern interrupt.
+  // La différenciation visuelle vient du cover (slide 1) et du CTA (dernière slide).
   if (i === 0) return 'slide slide-cover';
   if (i === total - 1) return 'slide slide-cta';
-  if (i === middleIdx) return 'slide slide-body slide-interrupt';
   return 'slide slide-body';
 }
 
@@ -46,26 +44,56 @@ async function generateCarouselPdf(slidesInputPath, outputPath) {
   const logoLightUri = fs.existsSync(logoLightPath) ? `file://${logoLightPath.replace(/\\/g, '/')}` : '';
   const logoDarkUri = fs.existsSync(logoDarkPath) ? `file://${logoDarkPath.replace(/\\/g, '/')}` : '';
 
+  // Édition badge — affiché sur cover slide. Mode optionnel (env var).
+  const editionLabel = (process.env.PIPELINE_MODE || '').toLowerCase() === 'veille'
+    ? 'Veille IA'
+    : 'Intégration IA';
+
+  const logoUri = logoLightUri;
+  const logoImg = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
+
   let slidesHtml = '';
   slides.forEach((text, i) => {
     const lines = text.trim().split('\n').filter(Boolean);
     const main = lines[0] || '';
     const sub = lines.slice(1).join(' ');
+    const isFirst = i === 0;
     const isLast = i === total - 1;
     const cls = slideClass(i, total);
-    const isInterrupt = cls.includes('slide-interrupt');
-    // Pattern interrupt = fond clair → logo dark. Sinon → logo light.
-    const logoUri = isInterrupt ? logoDarkUri : logoLightUri;
+
+    if (isFirst) {
+      // Cover slide : design "magazine cover"
+      slidesHtml += `
+      <div class="${cls}">
+        <div class="cover-top">
+          <span class="cover-edition">${editionLabel}</span>
+          <span class="cover-number">${String(i + 1).padStart(2, '0')}</span>
+        </div>
+        <div class="cover-center">
+          <div class="main-text">${escapeHtml(main)}</div>
+          ${sub ? `<div class="sub-text">${escapeHtml(sub)}</div>` : ''}
+        </div>
+        <div class="cover-signature">
+          ${logoImg}
+          <div class="sig-text">
+            <span class="sig-name">Victor Lenain</span>
+            <span class="sig-role">Dev freelance · victorlenain.fr</span>
+          </div>
+          <span class="sig-swipe">Swipe</span>
+        </div>
+      </div>`;
+      return;
+    }
+
+    // Body + CTA slides : header logo + accent-bar + content
     const saveCue = isLast
       ? '<div class="save-cue"><span class="save-cue-badge">ASTUCE</span> Enregistre ce post pour y revenir</div>'
       : '';
 
-    const logoBlock = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
-
     slidesHtml += `
     <div class="${cls}">
       <div class="header">
-        ${logoBlock}
+        ${logoImg}
         <div class="header-text">
           <span class="brand">Victor Lenain</span>
           <span class="brand-sub">Dev freelance · Intégration IA</span>
