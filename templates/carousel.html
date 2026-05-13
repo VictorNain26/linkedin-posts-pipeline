@@ -181,13 +181,31 @@
   /* ── Save cue (slide finale uniquement) ── */
   .save-cue {
     margin-top: 60px;
-    padding: 20px 28px;
+    padding: 22px 28px;
     background: rgba(59, 130, 246, 0.12);
     border-left: 4px solid #3b82f6;
     border-radius: 8px;
-    font-size: 20px;
+    font-size: 22px;
     color: #93c5fd;
     font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .save-cue-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: #3b82f6;
+    color: #f0f0f5;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    border-radius: 4px;
+  }
+  /* Variante save-cue sur fond clair (pattern interrupt) */
+  .slide-interrupt .save-cue {
+    background: rgba(59, 130, 246, 0.10);
+    color: #1e40af;
   }
 </style>
 </head>

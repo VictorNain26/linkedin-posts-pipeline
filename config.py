@@ -46,17 +46,16 @@ LOG_DIR.mkdir(exist_ok=True)
 # ──────────────────────────────────────────────────────────────
 # Sources RSS (veille)
 # ──────────────────────────────────────────────────────────────
-# URLs vérifiées en mai 2026. Audit régulier nécessaire car les feeds bougent.
-# - Anthropic n'a pas de feed officiel : on utilise un community mirror (à monitorer).
+# Sources RSS curées (mai 2026) — best practice : petit stack, signal haut.
+# Source : https://daige.st/en/blog/best-tech-rss-feeds-2026
+# Audit : URLs vérifiées 2026-05-13, summaries OK sur les 3.
 RSS_SOURCES = [
-    # Officiels (avec summary/description) :
+    # Officiel OpenAI — modèle leader marché, summaries OK
     "https://openai.com/news/rss.xml",
-    "https://www.lemondeinformatique.fr/flux-rss/intelligence-artificielle/rss.xml",
-    # Community mirror (Anthropic n'a pas de feed officiel en 2026) :
+    # Officiel Anthropic via community mirror (pas de feed officiel en 2026)
     "https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml",
-    # Titres only (summary vide) — on WebFetch leur URL pour le content :
-    "https://huggingface.co/blog/feed.xml",
-    "https://tldr.tech/api/rss/ai",
+    # Pragmatic Engineer — adoption IA en équipes engineering (cible CTO/tech lead PME)
+    "https://newsletter.pragmaticengineer.com/feed",
 ]
 RSS_FETCH_TIMEOUT = 10
 RSS_LOOKBACK_HOURS = 48

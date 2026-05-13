@@ -41,9 +41,10 @@ async function generateCarouselPdf(slidesInputPath, outputPath) {
 
   const templatePath = path.join(__dirname, 'templates', 'carousel.html');
   const template = fs.readFileSync(templatePath, 'utf8');
-  const logoPath = path.join(__dirname, 'templates', 'logo.png');
-  const logoExists = fs.existsSync(logoPath);
-  const logoUri = logoExists ? `file://${logoPath.replace(/\\/g, '/')}` : '';
+  const logoLightPath = path.join(__dirname, 'templates', 'logo-light.png');  // V blanc — fond dark
+  const logoDarkPath = path.join(__dirname, 'templates', 'logo.png');         // V noir — fond clair
+  const logoLightUri = fs.existsSync(logoLightPath) ? `file://${logoLightPath.replace(/\\/g, '/')}` : '';
+  const logoDarkUri = fs.existsSync(logoDarkPath) ? `file://${logoDarkPath.replace(/\\/g, '/')}` : '';
 
   let slidesHtml = '';
   slides.forEach((text, i) => {
@@ -51,16 +52,18 @@ async function generateCarouselPdf(slidesInputPath, outputPath) {
     const main = lines[0] || '';
     const sub = lines.slice(1).join(' ');
     const isLast = i === total - 1;
+    const cls = slideClass(i, total);
+    const isInterrupt = cls.includes('slide-interrupt');
+    // Pattern interrupt = fond clair → logo dark. Sinon → logo light.
+    const logoUri = isInterrupt ? logoDarkUri : logoLightUri;
     const saveCue = isLast
-      ? '<div class="save-cue">💾 Garde ce post si tu veux y revenir</div>'
+      ? '<div class="save-cue"><span class="save-cue-badge">ASTUCE</span> Enregistre ce post pour y revenir</div>'
       : '';
 
-    const logoBlock = logoExists
-      ? `<img src="${logoUri}" alt="Victor Lenain">`
-      : '';
+    const logoBlock = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
 
     slidesHtml += `
-    <div class="${slideClass(i, total)}">
+    <div class="${cls}">
       <div class="header">
         ${logoBlock}
         <div class="header-text">
@@ -77,7 +80,7 @@ async function generateCarouselPdf(slidesInputPath, outputPath) {
       </div>
       <div class="footer">
         <span>victorlenain.fr</span>
-        <span class="swipe">${isLast ? '✓' : 'Swipe →'}</span>
+        ${isLast ? '' : '<span class="swipe">Swipe</span>'}
       </div>
     </div>`;
   });
