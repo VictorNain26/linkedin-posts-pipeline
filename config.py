@@ -46,15 +46,22 @@ LOG_DIR.mkdir(exist_ok=True)
 # ──────────────────────────────────────────────────────────────
 # Sources RSS (veille)
 # ──────────────────────────────────────────────────────────────
+# URLs vérifiées en mai 2026. Audit régulier nécessaire car les feeds bougent.
+# - Anthropic n'a pas de feed officiel : on utilise un community mirror (à monitorer).
 RSS_SOURCES = [
-    "https://www.anthropic.com/rss.xml",
-    "https://openai.com/news/rss/",
+    # Officiels (avec summary/description) :
+    "https://openai.com/news/rss.xml",
+    "https://www.lemondeinformatique.fr/flux-rss/intelligence-artificielle/rss.xml",
+    # Community mirror (Anthropic n'a pas de feed officiel en 2026) :
+    "https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml",
+    # Titres only (summary vide) — on WebFetch leur URL pour le content :
     "https://huggingface.co/blog/feed.xml",
     "https://tldr.tech/api/rss/ai",
-    "https://www.lemondeinformatique.fr/flux-rss/thematique-intelligence-artificielle-107.xml",
 ]
 RSS_FETCH_TIMEOUT = 10
 RSS_LOOKBACK_HOURS = 48
+RSS_ARTICLE_FETCH_TIMEOUT = 15  # WebFetch sur les URLs articles
+RSS_ARTICLE_MAX_CHARS = 4000  # cap pour éviter blowup tokens
 
 # ──────────────────────────────────────────────────────────────
 # Modes : evergreen (mardi, PME) vs veille (jeudi, devs)
@@ -84,25 +91,50 @@ def current_mode(override: str | None = None) -> str:
 # ──────────────────────────────────────────────────────────────
 AUDIENCE_DESC = {
     MODE_EVERGREEN: (
-        "Cible : dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA "
+        "AUDIENCE : dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA "
         "dans leur produit ou leurs process métier.\n"
-        "Vocabulaire business, pas technique. Sensibles au ROI, au time-to-value, "
-        "aux risques (coût, lock-in, hallucinations).\n\n"
-        "MISSION : tu pars d'une news IA fraîche fournie par l'utilisateur et tu en tires "
-        'un angle BUSINESS PROSPECT — "voici ce que cette annonce change concrètement pour '
-        'un dirigeant de PME". Pas de jargon technique. Toujours ramener à un enjeu concret '
-        "(coût, productivité, risque, opportunité commerciale)."
+        "Vocabulaire BUSINESS, pas technique. Sensibles au ROI, au time-to-value, "
+        "aux risques (coût, lock-in, hallucinations, dépendance).\n\n"
+        "ANGLE : tu pars d'un ARTICLE IA fraîchement publié et tu commentes pour ce dirigeant. "
+        "Question centrale : \"qu'est-ce que cette annonce change concrètement pour lui ?\"\n"
+        "Réponds avec ses DOULEURS RÉELLES (budget IA flou, peur du lock-in fournisseur, "
+        "ROI incertain, mise en prod fragile, équipe pas formée), pas avec une histoire fictive."
     ),
     MODE_VEILLE: (
-        "Cible : développeurs, tech leads et CTOs qui implémentent de l'IA.\n"
-        "Vocabulaire technique OK (SDK, LLM, RAG, agents, MCP), retours d'expérience terrain. "
-        "Sensibles au gain de productivité, aux pièges, aux comparaisons franches d'outils.\n\n"
-        "MISSION : tu pars d'une news IA fraîche fournie par l'utilisateur et tu en tires "
-        "un angle DEV/TECH — \"voici ce que cette annonce change concrètement pour quelqu'un "
-        'qui code des intégrations IA". Retour terrain, comparaisons honnêtes, '
-        "patterns concrets, pas de hype."
+        "AUDIENCE : développeurs, tech leads et CTOs qui implémentent de l'IA dans des apps web.\n"
+        "Vocabulaire technique OK (SDK, LLM, RAG, agents, MCP, tool use). "
+        "Sensibles au gain de productivité, aux pièges d'intégration, aux comparaisons d'outils.\n\n"
+        "ANGLE : tu pars d'un ARTICLE IA fraîchement publié et tu commentes pour ce dev. "
+        "Question centrale : \"qu'est-ce que cette annonce change pour quelqu'un qui code "
+        "des intégrations IA aujourd'hui ?\"\n"
+        "Réponds avec ses DOULEURS RÉELLES (choix de stack, intégration fragile, doc obsolète, "
+        "modèles incompatibles, coûts API qui dérivent), pas avec une histoire fictive."
     ),
 }
+
+# ──────────────────────────────────────────────────────────────
+# Règle anti-fabrication (injectée dans tous les system blocks)
+# ──────────────────────────────────────────────────────────────
+FACTUAL_GROUNDING_RULES = """RÈGLES FACTUELLES — INTERDITS ABSOLUS :
+
+1. ZÉRO chiffre inventé. Si tu cites un chiffre, il DOIT venir de l'article source fourni.
+   Pas d'estimation type "800 €", "4h", "73%" sortie de ton imagination.
+
+2. ZÉRO anecdote personnelle inventée. Pas de "Mardi dernier j'ai...", "Un client m'a dit...",
+   "Sur mon dernier projet...". Victor n'a PAS validé d'anecdote — tu n'en inventes pas.
+
+3. ZÉRO situation fictive. Pas de scénario imaginaire ("Imagine que tu...") qui n'est pas
+   explicitement présenté comme hypothèse.
+
+4. CE QUE TU PEUX FAIRE :
+   - Commenter / analyser le contenu de l'article source
+   - Citer des CHIFFRES PRÉSENTS dans l'article (verbatim)
+   - Parler des DOULEURS GÉNÉRALES de l'audience (qu'elle vit déjà, sans nom propre)
+   - Donner un angle, une opinion, un cadre de réflexion
+   - Poser des questions au lecteur ("Tu as déjà eu ce souci ?")
+
+5. SI tu manques d'éléments factuels pour étayer un point, tu enlèves ce point.
+   Préfère un post court et vrai à un post long et inventé."""
 
 # ──────────────────────────────────────────────────────────────
 # Voice rules (constant, cacheable)
@@ -142,18 +174,23 @@ ANTI_AI_PATTERNS = [
 def system_voice(mode: str) -> list[dict]:
     """System blocks par mode.
 
-    Note prompt caching (mai 2026) : non activé ici car nos system blocks font
-    ~550 tokens — bien sous le minimum Sonnet 4.6 (2048) et Haiku 4.5 (4096).
-    `cache_control` serait silencieusement ignoré.
-    Source : https://platform.claude.com/docs/en/build-with-claude/prompt-caching
+    Structure :
+    - Bloc 1 : identité + audience + angle prospect
+    - Bloc 2 : règles factuelles anti-fabrication
+    - Bloc 3 : règles de voix Victor + anti-AI patterns
     """
     return [
         {
             "type": "text",
             "text": (
                 "Tu es un assistant qui produit du contenu LinkedIn pour Victor Lenain, "
-                "développeur freelance full-stack + intégration IA basé à Paris.\n\n" + AUDIENCE_DESC[mode]
+                "développeur freelance full-stack + intégration IA basé à Paris.\n\n"
+                + AUDIENCE_DESC[mode]
             ),
+        },
+        {
+            "type": "text",
+            "text": FACTUAL_GROUNDING_RULES,
         },
         {
             "type": "text",
@@ -194,7 +231,10 @@ MAX_SAME_FORMAT_STREAK = 3
 # Carousel format (best practice 2026 : portrait 4:5).
 # Dimensions effectives en dur dans html_to_pdf.js (1080x1350) — pas exposées
 # côté Python car aucun module Python ne les consomme.
-SLIDE_COUNT = 7
+# Slide count variable : l'agent Architect décide selon le besoin du contenu.
+SLIDE_COUNT_MIN = 5
+SLIDE_COUNT_MAX = 10
+SLIDE_COUNT_TARGET = 7  # sweet spot 2026 (référence pour le prompt)
 
 # ──────────────────────────────────────────────────────────────
 # Pipeline tuning
