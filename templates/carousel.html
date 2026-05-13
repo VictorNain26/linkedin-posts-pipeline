@@ -100,20 +100,80 @@
     font-weight: 400;
   }
 
-  /* ── Cover slide : la seule différence = titre plus gros ──── */
-  .slide-cover .main-text {
-    font-size: 88px;
-    line-height: 1.06;
-    letter-spacing: -0.035em;
-    font-weight: 800;
+  /* ──────────────────────────────────────────────
+     Cover slide : disposition distincte
+     - Pas de header dupliqué (le titre porte la slide)
+     - Titre énorme aligné en haut, prend tout l'espace
+     - Sub-text en gros sous le titre
+     - Signature en bas (logo + nom + role) compacte
+     - Flèche bas-droite uniquement
+     - Pas de slide-number (redondant sur slide 1)
+  ────────────────────────────────────────────── */
+  .slide-cover {
+    padding: 110px 90px 90px;
+    justify-content: space-between;
   }
-  .slide-cover .sub-text {
-    font-size: 30px;
-    margin-top: 40px;
+  .cover-headline {
+    display: flex;
+    flex-direction: column;
   }
-  .slide-cover .accent-bar {
+  .cover-headline .accent-bar {
     width: 120px;
     height: 6px;
+    margin-bottom: 48px;
+  }
+  .cover-headline .main-text {
+    font-size: 92px;
+    font-weight: 800;
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    color: #f0f0f5;
+  }
+  .cover-headline .sub-text {
+    font-size: 32px;
+    line-height: 1.4;
+    color: #9ca3af;
+    margin-top: 44px;
+    font-weight: 400;
+    max-width: 760px;
+  }
+  .cover-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 32px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+  }
+  .cover-signature {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .cover-signature img {
+    width: 60px;
+    height: 60px;
+    border-radius: 13px;
+  }
+  .cover-signature .sig-text {
+    display: flex;
+    flex-direction: column;
+  }
+  .cover-signature .sig-name {
+    font-size: 21px;
+    font-weight: 700;
+    color: #f0f0f5;
+    letter-spacing: -0.01em;
+  }
+  .cover-signature .sig-role {
+    font-size: 14px;
+    color: #6b7280;
+    font-weight: 500;
+    margin-top: 3px;
+  }
+  .cover-arrow {
+    font-size: 40px;
+    color: #3b82f6;
+    line-height: 1;
   }
 
   /* ── CTA slide finale ──────────────────────────────────────── */

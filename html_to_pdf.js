@@ -44,7 +44,32 @@ function fileUri(filePath) {
   return `file://${filePath.replace(/\\/g, '/')}`;
 }
 
-function renderSlide({ index, total, main, sub, logoUri }) {
+function renderCover({ index, total, main, sub, logoUri }) {
+  // Cover : disposition spécifique — titre en haut, signature en bas, pas de header dupliqué.
+  const logoTag = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
+  const subBlock = sub ? `<div class="sub-text">${escapeHtml(sub)}</div>` : '';
+  return `
+    <div class="${slideClass(index, total)}">
+      <div class="cover-headline">
+        <div class="accent-bar"></div>
+        <div class="main-text">${escapeHtml(main)}</div>
+        ${subBlock}
+      </div>
+      <div class="cover-bottom">
+        <div class="cover-signature">
+          ${logoTag}
+          <div class="sig-text">
+            <span class="sig-name">Victor Lenain</span>
+            <span class="sig-role">Dev freelance &middot; Int&eacute;gration IA</span>
+          </div>
+        </div>
+        <span class="cover-arrow">&rarr;</span>
+      </div>
+    </div>`;
+}
+
+function renderStandard({ index, total, main, sub, logoUri }) {
+  // Body + CTA : disposition uniforme — header logo en haut, content centré, footer en bas.
   const isLast = index === total - 1;
   const logoTag = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
   const subBlock = sub ? `<div class="sub-text">${escapeHtml(sub)}</div>` : '';
@@ -74,6 +99,10 @@ function renderSlide({ index, total, main, sub, logoUri }) {
         ${nextArrow}
       </div>
     </div>`;
+}
+
+function renderSlide(params) {
+  return params.index === 0 ? renderCover(params) : renderStandard(params);
 }
 
 function buildHtml(slides) {
