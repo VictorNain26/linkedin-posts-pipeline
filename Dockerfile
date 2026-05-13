@@ -78,10 +78,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Node.js 22 LTS (depuis Nodesource) ──
+# ── Node.js 22 LTS (depuis Nodesource) + npm latest ──
+# Le bundled npm contient une vieille picomatch vulnérable (CVE-2026-33671).
+# On bump npm en latest pour ramener picomatch fixé.
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
-    && rm -rf /var/lib/apt/lists/*
+    && npm install -g npm@latest \
+    && rm -rf /var/lib/apt/lists/* /root/.npm
 
 # ── Supercronic avec vérification SHA1 (checksum officiel publié par upstream) ──
 # Source : https://github.com/aptible/supercronic/releases/tag/v0.2.45
