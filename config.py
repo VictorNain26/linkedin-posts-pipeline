@@ -47,12 +47,15 @@ LOG_DIR.mkdir(exist_ok=True)
 # Audit : URLs vérifiées 2026-05-13, summaries OK sur les 3.
 # ──────────────────────────────────────────────────────────────
 RSS_SOURCES = [
-    # Officiel OpenAI — modèle leader marché
+    # Officiel OpenAI — lancements modèles + cas usage entreprise (AutoScout24, etc.)
     "https://openai.com/news/rss.xml",
     # Officiel Anthropic via community mirror (pas de feed officiel en 2026)
     "https://raw.githubusercontent.com/taobojlen/anthropic-rss-feed/main/anthropic_news_rss.xml",
-    # Pragmatic Engineer — adoption IA en équipes engineering (signal CTO)
-    "https://newsletter.pragmaticengineer.com/feed",
+    # TechCrunch AI — cas usage business IA, signal entreprise (anglais)
+    # Ex récent : "Anthropic courts a new kind of customer: small business" → cible PME
+    "https://techcrunch.com/category/artificial-intelligence/feed/",
+    # 01net IA — actu IA en français (contexte FR pour la cible PME française)
+    "https://www.01net.com/intelligence-artificielle/feed/",
 ]
 RSS_FETCH_TIMEOUT = 10
 RSS_LOOKBACK_HOURS = 48
