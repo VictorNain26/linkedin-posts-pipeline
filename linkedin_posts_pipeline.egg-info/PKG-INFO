@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: linkedin-posts-pipeline
+Version: 1.0.0
+Summary: Pipeline autonome LinkedIn — 8 agents Claude, multi-format, analytics
+Author: Victor Lenain
+License-Expression: MIT
+Requires-Python: >=3.13
+License-File: LICENSE
+Requires-Dist: anthropic>=0.101.0
+Requires-Dist: feedparser>=6.0.12
+Requires-Dist: requests>=2.34.0
+Requires-Dist: python-dotenv>=1.2.2
+Provides-Extra: dev
+Requires-Dist: pytest>=9.0.3; extra == "dev"
+Requires-Dist: pytest-cov>=7.1.0; extra == "dev"
+Requires-Dist: ruff>=0.15.12; extra == "dev"
+Requires-Dist: mypy>=2.1.0; extra == "dev"
+Requires-Dist: types-requests; extra == "dev"
+Dynamic: license-file

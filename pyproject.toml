@@ -3,7 +3,7 @@ name = "linkedin-posts-pipeline"
 version = "1.0.0"
 description = "Pipeline autonome LinkedIn — 8 agents Claude, multi-format, analytics"
 requires-python = ">=3.13"
-license = { text = "MIT" }
+license = "MIT"
 authors = [{ name = "Victor Lenain" }]
 
 dependencies = [
@@ -20,6 +20,28 @@ dev = [
     "ruff>=0.15.12",
     "mypy>=2.1.0",
     "types-requests",
+]
+
+[build-system]
+requires = ["setuptools>=77.0"]
+build-backend = "setuptools.build_meta"
+
+# Flat-layout application — modules Python à la racine, pas de "package" distribuable.
+# On liste explicitement les modules pour éviter que setuptools tente
+# de "discover" docker/ et templates/ comme packages.
+[tool.setuptools]
+py-modules = [
+    "anthropic_client",
+    "config",
+    "format_selector",
+    "generate_post",
+    "history",
+    "linkedin_analytics",
+    "linkedin_post",
+    "oauth_setup",
+    "rss_fetch",
+    "token_refresh",
+    "weekly_report",
 ]
 
 # ──────────────────────────────────────────────────────────────
