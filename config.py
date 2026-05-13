@@ -25,7 +25,7 @@ TOKEN_BUDGETS = {
     "detector": 1500,
     "hook_generator": 800,
     "hook_judge": 300,
-    "comment_writer": 400,
+    "comment_writer": 500,  # +100 pour caser la citation source en plus du CTA
     "weekly_report": 2000,
 }
 

@@ -159,17 +159,18 @@ HOOK_JUDGE_TOOL = {
 
 CTA_COMMENT_TOOL = {
     "name": "submit_cta_comment",
-    "description": "Submit the first comment as a CTA Victor posts under his own post.",
+    "description": "Submit the first comment with source citation + CTA Victor posts under his own post.",
     "input_schema": {
         "type": "object",
         "properties": {
             "comment": {
                 "type": "string",
-                "minLength": 60,
-                "maxLength": 400,
+                "minLength": 100,
+                "maxLength": 550,
                 "description": (
-                    "CTA direct + bénéfice clair pour le prospect + lien d'action "
-                    "(victorlenain.fr ou DM). PAS une question d'engagement, c'est une invitation à agir."
+                    "1. Citation de la source article (URL ou Source: ...) — transparence. "
+                    "2. CTA direct avec livrable explicite + lien d'action (victorlenain.fr ou DM). "
+                    "Pas une question d'engagement, une invitation à agir."
                 ),
             }
         },
@@ -391,24 +392,32 @@ def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
         user_text=(
             f"{article_ctx}\n\n"
             f"Angle du post : {angle['angle']}\n\n"
-            "Écris le 1er commentaire que Victor poste sous son propre post = un CTA DIRECT.\n\n"
-            "Objectif : pousser le prospect à AGIR (pas juste réagir).\n\n"
-            "Best practice LinkedIn 2026 (b2brocket, leadsbridge) : un CTA convertit quand le "
-            "LIVRABLE est tangible et précis. Évite 'on regarde ensemble', 'on en parle'.\n\n"
-            "Format attendu (200-400 chars) :\n"
-            "1. UNE phrase de transition courte vers l'action (ancrée sur le sujet du post).\n"
-            "2. LE CTA explicite : ce que tu PROPOSES (audit gratuit, appel découverte, "
-            "   sparring 30min, etc).\n"
-            "3. LE LIVRABLE TANGIBLE : ce que le prospect REPART AVEC concrètement.\n"
-            "   - Indispensable : un livrable nommé (pas 'on discute', 'on regarde').\n"
-            "   - Exemples valides : 'une feuille de route claire', 'une short-list de 3 cas', "
-            "     'une grille de risques chiffrée', 'un plan d'action prioritisé', "
-            "     'un audit écrit de ta stack'.\n"
-            "   - Si tu ne peux pas nommer le livrable → reformule le CTA.\n"
-            f"4. LE LIEN d'action : {PROFILE_URL} OU 'DM ouvert'.\n\n"
+            "Écris le 1er commentaire que Victor poste sous son propre post.\n"
+            "C'est un commentaire en 2 temps : (a) citation source + (b) CTA direct.\n\n"
+            "Objectif : transparence (on cite toujours nos sources) + pousser le prospect à AGIR.\n\n"
+            "Best practice LinkedIn 2026 : un CTA convertit quand le LIVRABLE est tangible et précis. "
+            "Évite 'on regarde ensemble', 'on en parle'.\n\n"
+            "Format attendu (300-500 chars) :\n\n"
+            "PARTIE 1 — Source (TOUJOURS en premier) :\n"
+            "  - Format : 'Source : {URL exacte de l'article source ci-dessus}'\n"
+            "  - L'URL est dans le bloc <article_source> ci-dessus, à recopier verbatim.\n"
+            "  - Pas de paraphrase, pas d'invention d'URL.\n\n"
+            "PARTIE 2 — CTA (après la source) :\n"
+            "  1. UNE phrase de transition vers l'action (ancrée sur le sujet du post).\n"
+            "  2. LE CTA explicite : ce que tu PROPOSES (audit gratuit, sparring 30min, etc).\n"
+            "  3. LE LIVRABLE TANGIBLE : ce que le prospect REPART AVEC.\n"
+            "     - Indispensable : un livrable nommé (pas 'on discute').\n"
+            "     - Exemples : 'une feuille de route claire', 'une short-list de 3 cas',\n"
+            "       'une grille de risques', 'un plan d'action prioritisé'.\n"
+            f"  4. LE LIEN d'action : {PROFILE_URL} OU 'DM ouvert'.\n\n"
+            "Structure type :\n"
+            "  Source : https://exemple.com/article-original\n"
+            "  \n"
+            "  [phrase de transition courte vers l'action]\n"
+            "  [CTA avec livrable] — DM ouvert ou victorlenain.fr\n\n"
             "Ton : direct, voix Victor (oral, courte), pas vendeur agressif.\n"
-            "À éviter : anecdote perso fictive, chiffre inventé, promesse exagérée, "
-            "verbe vague type 'discuter' / 'regarder' / 'voir' sans livrable explicite."
+            "À éviter : anecdote perso fictive, chiffre inventé, URL fabriquée, "
+            "verbe vague type 'discuter' / 'regarder' sans livrable explicite."
         ),
         tool=CTA_COMMENT_TOOL,
         max_tokens=TOKEN_BUDGETS["comment_writer"],
