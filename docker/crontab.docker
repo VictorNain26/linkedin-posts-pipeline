@@ -26,3 +26,6 @@
 
 # Daily 2h — backup du volume /data (rotation 14 jours)
 0 2 * * * cd /app && ./backup.sh
+
+# Daily 3h — cleanup outputs (>7j) + logs (>14j) + rotation metrics.jsonl
+0 3 * * * cd /app && ./cleanup.sh

@@ -66,6 +66,16 @@ if [ -f "$DIR/.venv/bin/activate" ]; then
     source "$DIR/.venv/bin/activate"
 fi
 
+# ── Charger nvm si présent (pour Node.js dans cron / SSH non-interactif) ──
+if [ -d "$HOME/.nvm" ]; then
+    export NVM_DIR="$HOME/.nvm"
+    # shellcheck disable=SC1091
+    [ -s "$NVM_DIR/nvm.sh" ] && source "$NVM_DIR/nvm.sh" --no-use
+    # Ajoute la version active de node au PATH (sans charger nvm en entier)
+    NODE_BIN=$(ls -d "$HOME"/.nvm/versions/node/*/bin 2>/dev/null | sort -V | tail -1)
+    [ -n "$NODE_BIN" ] && export PATH="$NODE_BIN:$PATH"
+fi
+
 export LINKEDIN_DATA_DIR="$DATA_DIR"
 export PIPELINE_DIR="$DIR"
 export PYTHONPATH="$DIR${PYTHONPATH:+:$PYTHONPATH}"

@@ -41,6 +41,10 @@
 # ── Backup auto ─────────────────────────────────────────────────────
 # Daily 02h00 — dump SQLite + tar.gz, rotation 14 jours
 # 0 2 * * * cd /home/victormoi/linkedin-posts && ./backup.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# ── Cleanup espace disque ───────────────────────────────────────────
+# Daily 03h00 — purge output/ >7j + logs/ >14j + rotation metrics.jsonl
+# 0 3 * * * cd /home/victormoi/linkedin-posts && ./cleanup.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
 # ────────────────────────────────────────────────────────────────────────
 #
 # Variables d'environnement requises (dans .env, mode 600) :
