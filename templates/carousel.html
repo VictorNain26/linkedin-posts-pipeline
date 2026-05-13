@@ -4,24 +4,20 @@
 <meta charset="UTF-8">
 <style>
   /* ────────────────────────────────────────────────────────────────
-     Design carousel LinkedIn 2026
-     - Format portrait 4:5 (1080x1350) — mobile-first
-     - Fond dark uniforme (#0a0a0f)
-     - Cover slide : design "magazine cover" distinctif
-     - Body slides : layout simple, focus contenu
-     - CTA slide : couleur accent + bouton visuel
-     - Logo light en haut chaque slide (sauf cover qui a son propre layout)
+     LinkedIn carousel — design uniforme dark avec accent radial bleu.
+     Format portrait 1080x1350 (best practice 2026).
   ──────────────────────────────────────────────────────────────── */
 
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
     font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
-    background: #0a0a0f;
     color: #f0f0f5;
+    background: #0a0a0f;
     -webkit-font-smoothing: antialiased;
   }
 
+  /* ── Base slide : layout commun à toutes les slides ───────── */
   .slide {
     width: 1080px;
     height: 1350px;
@@ -30,118 +26,19 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    background: #0a0a0f;
+    justify-content: space-between;
+    background:
+      radial-gradient(ellipse 800px 600px at 20% 0%, rgba(59, 130, 246, 0.16), transparent 70%),
+      radial-gradient(ellipse 600px 800px at 100% 100%, rgba(59, 130, 246, 0.07), transparent 60%),
+      #0a0a0f;
   }
   .slide:last-child { page-break-after: auto; }
 
-  /* ──────────────────────────────────────────────
-     Cover slide (magazine cover style)
-  ────────────────────────────────────────────── */
-  .slide-cover {
-    justify-content: space-between;
-    background:
-      radial-gradient(ellipse 800px 600px at 20% 0%, rgba(59, 130, 246, 0.18), transparent 70%),
-      radial-gradient(ellipse 600px 800px at 100% 100%, rgba(59, 130, 246, 0.08), transparent 60%),
-      #0a0a0f;
-  }
-  .cover-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-start;
-  }
-  .cover-edition {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    font-size: 16px;
-    font-weight: 700;
-    color: #3b82f6;
-    letter-spacing: 0.25em;
-    text-transform: uppercase;
-  }
-  .cover-edition::before {
-    content: '';
-    display: inline-block;
-    width: 28px;
-    height: 3px;
-    background: #3b82f6;
-    border-radius: 2px;
-  }
-  .cover-number {
-    font-size: 96px;
-    font-weight: 800;
-    color: rgba(59, 130, 246, 0.25);
-    line-height: 1;
-    letter-spacing: -0.04em;
-  }
-  .cover-center {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    padding: 40px 0;
-  }
-  .cover-center .main-text {
-    font-size: 92px;
-    font-weight: 800;
-    line-height: 1.04;
-    letter-spacing: -0.035em;
-    color: #f0f0f5;
-  }
-  .cover-center .sub-text {
-    font-size: 32px;
-    line-height: 1.4;
-    color: #9ca3af;
-    margin-top: 40px;
-    font-weight: 400;
-    max-width: 700px;
-  }
-  .cover-signature {
-    display: flex;
-    align-items: center;
-    gap: 20px;
-    padding-top: 32px;
-    border-top: 1px solid rgba(255, 255, 255, 0.08);
-  }
-  .cover-signature img {
-    width: 64px;
-    height: 64px;
-    border-radius: 14px;
-  }
-  .cover-signature .sig-text {
-    display: flex;
-    flex-direction: column;
-  }
-  .cover-signature .sig-name {
-    font-size: 22px;
-    font-weight: 700;
-    color: #f0f0f5;
-    letter-spacing: -0.01em;
-  }
-  .cover-signature .sig-role {
-    font-size: 15px;
-    color: #6b7280;
-    font-weight: 500;
-    margin-top: 2px;
-  }
-  .cover-signature .sig-swipe {
-    margin-left: auto;
-    font-size: 16px;
-    color: #3b82f6;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-  }
-
-  /* ──────────────────────────────────────────────
-     Body slides (slides 2 → N-1)
-  ────────────────────────────────────────────── */
-  .slide-body { justify-content: space-between; }
-
+  /* ── Header (logo + brand) ────────────────────────────────── */
   .header {
     display: flex;
     align-items: center;
     gap: 18px;
-    height: 60px;
   }
   .header img {
     width: 56px;
@@ -162,6 +59,7 @@
     margin-top: 2px;
   }
 
+  /* ── Numéro de slide (top-right) ───────────────────────────── */
   .slide-number {
     position: absolute;
     top: 100px;
@@ -172,20 +70,7 @@
     letter-spacing: 0.08em;
   }
 
-  .footer {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    font-size: 16px;
-    color: #6b7280;
-    font-weight: 500;
-  }
-  .footer .swipe {
-    color: #3b82f6;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-  }
-
+  /* ── Corps de la slide ─────────────────────────────────────── */
   .body {
     flex: 1;
     display: flex;
@@ -200,15 +85,14 @@
     border-radius: 3px;
     margin-bottom: 44px;
   }
-
-  .slide-body .main-text {
+  .main-text {
     font-size: 56px;
     font-weight: 700;
     line-height: 1.18;
     letter-spacing: -0.02em;
     color: #f0f0f5;
   }
-  .slide-body .sub-text {
+  .sub-text {
     font-size: 28px;
     line-height: 1.5;
     color: #9ca3af;
@@ -216,35 +100,35 @@
     font-weight: 400;
   }
 
-  /* ──────────────────────────────────────────────
-     CTA slide finale
-  ────────────────────────────────────────────── */
-  .slide-cta {
-    justify-content: space-between;
-    background:
-      radial-gradient(ellipse 700px 500px at 50% 50%, rgba(59, 130, 246, 0.20), transparent 70%),
-      #0a0a0f;
-  }
-  .slide-cta .main-text {
-    font-size: 64px;
+  /* ── Cover slide : la seule différence = titre plus gros ──── */
+  .slide-cover .main-text {
+    font-size: 88px;
+    line-height: 1.06;
+    letter-spacing: -0.035em;
     font-weight: 800;
-    line-height: 1.12;
-    color: #3b82f6;
-    letter-spacing: -0.025em;
   }
-  .slide-cta .sub-text {
-    font-size: 28px;
-    color: #d1d5db;
-    margin-top: 36px;
-    line-height: 1.5;
+  .slide-cover .sub-text {
+    font-size: 30px;
+    margin-top: 40px;
   }
-  .slide-cta .accent-bar {
-    background: #3b82f6;
+  .slide-cover .accent-bar {
     width: 120px;
     height: 6px;
   }
 
-  /* Badge ASTUCE pour save cue */
+  /* ── CTA slide finale ──────────────────────────────────────── */
+  .slide-cta .main-text {
+    font-size: 60px;
+    font-weight: 800;
+    color: #3b82f6;
+    letter-spacing: -0.025em;
+  }
+  .slide-cta .accent-bar {
+    width: 120px;
+    height: 6px;
+  }
+
+  /* Badge ASTUCE (save cue sur slide finale) */
   .save-cue {
     margin-top: 56px;
     padding: 22px 28px;
@@ -267,6 +151,22 @@
     font-weight: 700;
     letter-spacing: 0.1em;
     border-radius: 4px;
+  }
+
+  /* ── Footer ────────────────────────────────────────────────── */
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+  .footer .next-arrow {
+    font-size: 32px;
+    color: #3b82f6;
+    line-height: 1;
+    font-weight: 400;
   }
 </style>
 </head>
