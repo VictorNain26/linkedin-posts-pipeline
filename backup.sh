@@ -9,7 +9,6 @@
 set -euo pipefail
 IFS=$'\n\t'
 
-DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${LINKEDIN_DATA_DIR:-$HOME/linkedin-posts-data}"
 BACKUP_DIR="${LINKEDIN_BACKUP_DIR:-$HOME/linkedin-posts-backups}"
 RETENTION_DAYS="${LINKEDIN_BACKUP_RETENTION_DAYS:-14}"
