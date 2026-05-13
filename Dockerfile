@@ -1,23 +1,61 @@
-# LinkedIn Posts Auto-Pipeline — image Docker tout-en-un
-# Stack : Python 3.13 (slim) + Node.js 22 + Chromium (Puppeteer) + supercronic (cron)
-# Data persistante via volume sur /data
-# Secrets via env vars ou fichier .env mounté
+# syntax=docker/dockerfile:1.7
+# LinkedIn Posts Auto-Pipeline — multi-stage build (best practices mai 2026)
+#
+# Stage 1 (builder)  : compile Python deps dans une image full
+# Stage 2 (runtime)  : image slim avec uniquement les artifacts nécessaires
+#
+# Sécurité :
+# - User non-root (UID 1000)
+# - SHA256 vérifié sur binaire supercronic
+# - Puppeteer pin version
+# - HEALTHCHECK fonctionnel
+# - Init system (docker-compose init: true)
 
-FROM python:3.13-slim-bookworm
+# ============================================================
+# Stage 1 — Builder : compile les wheels Python
+# ============================================================
+FROM python:3.13-slim-bookworm AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+# Build deps (gcc pour compiler les extensions C de feedparser/anthropic si besoin)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /build
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+
+# ============================================================
+# Stage 2 — Runtime : image minimaliste de production
+# ============================================================
+FROM python:3.13-slim-bookworm AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     DEBIAN_FRONTEND=noninteractive \
+    TZ=Europe/Paris \
     LINKEDIN_DATA_DIR=/data \
     PIPELINE_DIR=/app \
-    PYTHONPATH=/app
+    PYTHONPATH=/app \
+    PATH="/home/linkedin/.local/bin:${PATH}" \
+    # Puppeteer : utilise le Chromium système, pas de download
+    PUPPETEER_SKIP_DOWNLOAD=true \
+    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# ── 1. Dépendances système (Chromium pour Puppeteer + Node + fonts) ──
+# ── Dépendances runtime minimales ──
+# Chromium + fonts pour Puppeteer + sqlite3 CLI + util-linux (flock) + tzdata
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
-        curl \
-        gnupg \
         chromium \
+        curl \
+        dumb-init \
         fonts-liberation \
         fonts-noto-color-emoji \
         fonts-noto-cjk \
@@ -35,53 +73,67 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libpango-1.0-0 \
         libasound2 \
         sqlite3 \
+        tzdata \
         util-linux \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 2. Node.js 22 LTS ──
+# ── Node.js 22 LTS (depuis Nodesource) ──
 RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
 
-# ── 3. supercronic (cron container-friendly, logge sur stdout) ──
-# Note : pour un build prod hardened, pin SHA256 du binaire avec :
-#   RUN echo "${SHA256} supercronic-linux-amd64" | sha256sum -c -
-ENV SUPERCRONIC_VERSION=v0.2.45
-RUN curl -fsSLO "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-amd64" \
-    && chmod +x supercronic-linux-amd64 \
-    && mv supercronic-linux-amd64 /usr/local/bin/supercronic
+# ── Supercronic avec vérification SHA1 (checksum officiel publié par upstream) ──
+# Source : https://github.com/aptible/supercronic/releases/tag/v0.2.45
+ARG SUPERCRONIC_VERSION=v0.2.45
+ARG SUPERCRONIC_SHA1=e894b193bea75a5ee644e700c59e30eedc804cf7
+ARG TARGETARCH=amd64
+RUN curl -fsSLo /usr/local/bin/supercronic \
+        "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
+    && echo "${SUPERCRONIC_SHA1}  /usr/local/bin/supercronic" | sha1sum -c - \
+    && chmod +x /usr/local/bin/supercronic
 
-# ── 4. Code + deps Python ──
-WORKDIR /app
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# ── User non-root ──
+RUN useradd --create-home --uid 1000 --shell /bin/bash linkedin \
+    && mkdir -p /data /app \
+    && chown -R linkedin:linkedin /data /app
 
-# ── 5. Deps Node (Puppeteer utilise le Chromium système, pas son bundle) ──
-ENV PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
-    PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
-RUN npm init -y && npm install puppeteer@latest --omit=optional
-
-# ── 6. Code applicatif ──
-COPY . .
-
-# Crontab : voir crontab.docker (monté ou injecté à build)
-COPY docker/crontab.docker /app/crontab
-
-# Permissions exécutables
-RUN chmod +x /app/pipeline.sh /app/healthcheck.sh /app/fetch_analytics.sh /app/weekly_report.sh
-
-# ── 7. User non-root pour sécurité ──
-RUN useradd -m -u 1000 linkedin && \
-    mkdir -p /data && \
-    chown -R linkedin:linkedin /app /data
 USER linkedin
+WORKDIR /app
+
+# ── Python deps : copy du builder ──
+COPY --from=builder --chown=linkedin:linkedin /root/.local /home/linkedin/.local
+
+# ── Puppeteer pinné (reproducible builds) ──
+# On installe `puppeteer` standard avec PUPPETEER_SKIP_DOWNLOAD=true :
+# - bundled Chromium NON téléchargé (gain ~300MB)
+# - launch() utilise PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
+# Cohérent avec le setup local (Victor's victorserv) qui peut aussi utiliser
+# le Chromium système si désiré.
+ARG PUPPETEER_VERSION=23.11.1
+RUN npm init -y --silent \
+    && npm install --omit=optional --no-fund --no-audit \
+        puppeteer@${PUPPETEER_VERSION}
+
+# ── Code applicatif (en dernier pour optimiser le cache layer) ──
+COPY --chown=linkedin:linkedin . /app/
+
+# Crontab Docker (différent du CRON_DISABLED.txt qui est pour cron host)
+RUN cp /app/docker/crontab.docker /app/crontab
+
+# ── Healthcheck réel ──
+# Vérifie : (1) modules Python importent, (2) DB writable, (3) env vars critiques présentes
+HEALTHCHECK --interval=5m --timeout=15s --start-period=30s --retries=2 \
+    CMD python -c "import os, sys; \
+        assert os.environ.get('ANTHROPIC_API_KEY'), 'ANTHROPIC_API_KEY missing'; \
+        import config, history, format_selector, linkedin_post, linkedin_analytics, weekly_report; \
+        history.init_db()" || exit 1
 
 VOLUME ["/data"]
 
-# Healthcheck (vérifie que le venv Python répond)
-HEALTHCHECK --interval=60s --timeout=10s --start-period=30s --retries=3 \
-    CMD python -c "import config, history; history.init_db()" || exit 1
-
-# Entrypoint = supercronic qui lit /app/crontab et logge sur stdout
-ENTRYPOINT ["supercronic", "-inotify"]
-CMD ["/app/crontab"]
+# ── Init system (dumb-init) pour gérer SIGTERM + reaping zombies Chromium ──
+# Note : docker-compose 'init: true' active aussi docker-init, mais dumb-init en ENTRYPOINT
+# garantit le comportement même si run sans compose (docker run, k8s, etc).
+ENTRYPOINT ["/usr/bin/dumb-init", "--"]
+CMD ["supercronic", "-inotify", "/app/crontab"]

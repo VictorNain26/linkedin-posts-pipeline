@@ -1,6 +1,10 @@
+// Puppeteer standard : bundled Chromium par défaut (setup local), ou Chromium
+// système si PUPPETEER_EXECUTABLE_PATH est set (Docker).
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 const path = require('path');
+
+const CHROMIUM_EXECUTABLE = process.env.PUPPETEER_EXECUTABLE_PATH || undefined;
 
 // Format LinkedIn 2026 best practice: portrait 4:5 (1080x1350)
 const SLIDE_WIDTH = 1080;
@@ -48,7 +52,13 @@ async function generateCarouselPdf(slidesInputPath, outputPath) {
 
   let browser;
   try {
-    browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const launchOptions = {
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    };
+    if (CHROMIUM_EXECUTABLE) {
+      launchOptions.executablePath = CHROMIUM_EXECUTABLE;
+    }
+    browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
     await page.setViewport({ width: SLIDE_WIDTH, height: SLIDE_HEIGHT });
     await page.goto(`file://${tmpHtml}`, { waitUntil: 'networkidle0' });

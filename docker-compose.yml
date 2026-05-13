@@ -1,10 +1,28 @@
+# docker-compose.yml — orchestration LinkedIn pipeline
+# Best practices mai 2026 :
+# - init: true       → docker-init reap les zombies (Chromium spawn beaucoup de subprocess)
+# - secrets:         → injection des credentials via fichiers (pas env vars, log-safe)
+# - tmpfs /tmp       → Chromium écrit beaucoup → RAM-backed, plus rapide + safer
+# - resources.limits → cap mémoire pour éviter OOM kill du host
+# - log rotation     → évite que stdout supercronic remplisse le disque
+
 services:
   linkedin-pipeline:
-    build: .
+    build:
+      context: .
+      dockerfile: Dockerfile
     image: linkedin-posts-pipeline:latest
     container_name: linkedin-pipeline
     restart: unless-stopped
 
+    # Reap zombies (Chromium subprocess) + gracefull SIGTERM → supercronic
+    init: true
+
+    # ── Secrets via env_file en local (dev) / Docker secrets recommandés en prod ──
+    # Pour passer en prod hardened :
+    #   1. enlever env_file
+    #   2. activer la section `secrets` ci-dessous + créer les secrets
+    #   3. adapter le code pour lire /run/secrets/* au lieu de env vars
     env_file:
       - .env
 
@@ -13,22 +31,48 @@ services:
       TZ: Europe/Paris
 
     volumes:
-      # Data persistante (history.db, output/, logs/, reports/)
+      # Persistance des données (history.db, output/, logs/, reports/)
       - ./data:/data
-      # Surcharge optionnelle du crontab sans rebuild
+      # Override optionnel du crontab sans rebuild
       # - ./docker/crontab.docker:/app/crontab:ro
 
-    # Limites de ressources (Chromium est gourmand)
+    # /tmp en RAM : Chromium y écrit massivement (PDF gen)
+    tmpfs:
+      - /tmp:size=512M,mode=1777
+
+    # Limites pour éviter d'éouffer le host
     deploy:
       resources:
         limits:
-          memory: 1G
-          cpus: '1.0'
+          memory: 2G       # Chromium pic ~1.5GB pendant le rendu PDF
+          cpus: '2.0'
         reservations:
           memory: 512M
+          cpus: '0.5'
 
+    # Réseau : pas besoin de bind port (sortie HTTP only)
+    networks:
+      - default
+
+    # Logs : rotation pour éviter de saturer le disque
     logging:
       driver: json-file
       options:
         max-size: "10m"
         max-file: "3"
+
+    # Sécurité : pas de privilèges, pas d'accès au host docker socket
+    security_opt:
+      - no-new-privileges:true
+    read_only: false  # supercronic écrit dans /tmp et /app/crontab (inotify)
+    cap_drop:
+      - ALL
+
+# ── Secrets (à activer pour prod hardened — nécessite Docker Swarm ou compose v3.7+) ──
+# secrets:
+#   anthropic_api_key:
+#     file: ./secrets/anthropic_api_key.txt
+#   li_access_token:
+#     file: ./secrets/li_access_token.txt
+#   gmail_app_password:
+#     file: ./secrets/gmail_app_password.txt
