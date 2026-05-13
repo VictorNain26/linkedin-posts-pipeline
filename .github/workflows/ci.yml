@@ -99,25 +99,13 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      # Bloque CRITICAL (notre code) — les HIGH résiduels viennent de la
-      # Go stdlib bundled dans Chromium debian (non-fixables sans migration
-      # de base image). On les affiche en rapport non-bloquant ci-dessous.
-      - name: Trivy CRITICAL scan (blocking)
+      - name: Trivy vulnerability scan
         uses: aquasecurity/trivy-action@v0.36.0
         with:
           image-ref: linkedin-posts-pipeline:ci
           format: table
           exit-code: 1
-          severity: CRITICAL
-          ignore-unfixed: true
-
-      - name: Trivy HIGH report (non-blocking)
-        uses: aquasecurity/trivy-action@v0.36.0
-        with:
-          image-ref: linkedin-posts-pipeline:ci
-          format: table
-          exit-code: 0
-          severity: HIGH
+          severity: CRITICAL,HIGH
           ignore-unfixed: true
 
       - name: Hadolint Dockerfile

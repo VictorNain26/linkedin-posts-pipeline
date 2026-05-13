@@ -1,27 +1,55 @@
 # syntax=docker/dockerfile:1.7
 # LinkedIn Posts Auto-Pipeline — multi-stage build (best practices mai 2026)
 #
-# Stage 1 (builder)  : compile Python deps dans une image full
-# Stage 2 (runtime)  : image slim avec uniquement les artifacts nécessaires
+# Stages :
+#   1. supercronic-builder : compile supercronic from source (Go récent)
+#      → évite les CVE Go stdlib du binaire pré-compilé upstream
+#   2. node-builder        : install node_modules (image officielle Node)
+#      → npm récent, picomatch CVE fixed, npm retiré du runtime
+#   3. python-builder      : compile les wheels Python
+#   4. runtime             : image slim avec uniquement les artifacts finaux
 #
 # Sécurité :
+# - Base Debian Trixie (chromium + Go stdlib à jour)
 # - User non-root (UID 1000)
-# - SHA256 vérifié sur binaire supercronic
-# - Puppeteer pin version
-# - HEALTHCHECK fonctionnel
-# - Init system (docker-compose init: true)
+# - Pas de npm au runtime → 0 picomatch vulnérable
+# - supercronic compilé from source → 0 CVE Go stdlib
+# - HEALTHCHECK fonctionnel, dumb-init pour signals
 
 # ============================================================
-# Stage 1 — Builder : compile les wheels Python
+# Stage 1 — Supercronic builder (Go récent → pas de CVE stdlib)
 # ============================================================
-FROM python:3.13.13-slim-bookworm AS builder
+FROM golang:1.26-trixie AS supercronic-builder
+
+ARG SUPERCRONIC_VERSION=v0.2.45
+
+WORKDIR /build
+RUN git clone --depth 1 --branch "${SUPERCRONIC_VERSION}" \
+        https://github.com/aptible/supercronic.git . \
+    && CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags="-s -w -X main.Version=${SUPERCRONIC_VERSION}" \
+        -o /supercronic .
+
+# ============================================================
+# Stage 2 — Node builder (npm récent, image officielle)
+# ============================================================
+FROM node:22-trixie-slim AS node-builder
+
+ENV PUPPETEER_SKIP_DOWNLOAD=true
+WORKDIR /node-app
+COPY package.json ./
+RUN npm install --omit=optional --no-fund --no-audit
+
+# ============================================================
+# Stage 3 — Python builder
+# ============================================================
+FROM python:3.13.13-slim-trixie AS python-builder
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
-# Build deps (gcc pour compiler les extensions C de feedparser/anthropic si besoin)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         gcc \
@@ -31,11 +59,10 @@ WORKDIR /build
 COPY requirements.txt .
 RUN pip install --user --no-cache-dir -r requirements.txt
 
-
 # ============================================================
-# Stage 2 — Runtime : image minimaliste de production
+# Stage 4 — Runtime
 # ============================================================
-FROM python:3.13.13-slim-bookworm AS runtime
+FROM python:3.13.13-slim-trixie AS runtime
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -45,16 +72,13 @@ ENV PYTHONUNBUFFERED=1 \
     PIPELINE_DIR=/app \
     PYTHONPATH=/app \
     PATH="/home/linkedin/.local/bin:${PATH}" \
-    # Puppeteer : utilise le Chromium système, pas de download
     PUPPETEER_SKIP_DOWNLOAD=true \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
-# ── Dépendances runtime minimales ──
-# Chromium + fonts pour Puppeteer + sqlite3 CLI + util-linux (flock) + tzdata
+# ── Dépendances système ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates \
         chromium \
-        curl \
         dumb-init \
         fonts-liberation \
         fonts-noto-color-emoji \
@@ -78,23 +102,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && echo $TZ > /etc/timezone \
     && rm -rf /var/lib/apt/lists/*
 
-# ── Node.js 22 LTS (depuis Nodesource) + npm latest ──
-# Le bundled npm contient une vieille picomatch vulnérable (CVE-2026-33671).
-# On bump npm en latest pour ramener picomatch fixé.
-RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-    && apt-get install -y --no-install-recommends nodejs \
-    && npm install -g npm@latest \
-    && rm -rf /var/lib/apt/lists/* /root/.npm
+# ── Node.js binaire depuis image officielle (pas de npm au runtime) ──
+COPY --from=node-builder /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-builder /usr/local/bin/corepack /usr/local/bin/corepack
 
-# ── Supercronic avec vérification SHA1 (checksum officiel publié par upstream) ──
-# Source : https://github.com/aptible/supercronic/releases/tag/v0.2.45
-ARG SUPERCRONIC_VERSION=v0.2.45
-ARG SUPERCRONIC_SHA1=e894b193bea75a5ee644e700c59e30eedc804cf7
-ARG TARGETARCH=amd64
-RUN curl -fsSLo /usr/local/bin/supercronic \
-        "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${TARGETARCH}" \
-    && echo "${SUPERCRONIC_SHA1}  /usr/local/bin/supercronic" | sha1sum -c - \
-    && chmod +x /usr/local/bin/supercronic
+# ── Supercronic compilé from source ──
+COPY --from=supercronic-builder /supercronic /usr/local/bin/supercronic
+RUN chmod +x /usr/local/bin/supercronic
 
 # ── User non-root ──
 RUN useradd --create-home --uid 1000 --shell /bin/bash linkedin \
@@ -104,24 +118,18 @@ RUN useradd --create-home --uid 1000 --shell /bin/bash linkedin \
 USER linkedin
 WORKDIR /app
 
-# ── Python deps : copy du builder ──
-COPY --from=builder --chown=linkedin:linkedin /root/.local /home/linkedin/.local
+# ── Python deps depuis builder ──
+COPY --from=python-builder --chown=linkedin:linkedin /root/.local /home/linkedin/.local
 
-# ── Puppeteer via package.json versionné (avec overrides CVE) ──
-# Le package.json est COPY du repo pour bénéficier des overrides picomatch
-# (CVE-2026-33671 ReDoS). Sans ça, Puppeteer ramène la version vulnérable.
-# Setup : PUPPETEER_SKIP_DOWNLOAD=true → utilise Chromium système (gain ~300MB).
+# ── node_modules depuis node-builder (npm n'est PAS installé runtime) ──
+COPY --from=node-builder --chown=linkedin:linkedin /node-app/node_modules /app/node_modules
 COPY --chown=linkedin:linkedin package.json /app/package.json
-RUN npm install --omit=optional --no-fund --no-audit
 
-# ── Code applicatif (en dernier pour optimiser le cache layer) ──
+# ── Code applicatif ──
 COPY --chown=linkedin:linkedin . /app/
-
-# Crontab Docker (différent du CRON_DISABLED.txt qui est pour cron host)
 RUN cp /app/docker/crontab.docker /app/crontab
 
-# ── Healthcheck réel ──
-# Vérifie : (1) modules Python importent, (2) DB writable, (3) env vars critiques présentes
+# ── Healthcheck ──
 HEALTHCHECK --interval=5m --timeout=15s --start-period=30s --retries=2 \
     CMD python -c "import os, sys; \
         assert os.environ.get('ANTHROPIC_API_KEY'), 'ANTHROPIC_API_KEY missing'; \
@@ -130,8 +138,6 @@ HEALTHCHECK --interval=5m --timeout=15s --start-period=30s --retries=2 \
 
 VOLUME ["/data"]
 
-# ── Init system (dumb-init) pour gérer SIGTERM + reaping zombies Chromium ──
-# Note : docker-compose 'init: true' active aussi docker-init, mais dumb-init en ENTRYPOINT
-# garantit le comportement même si run sans compose (docker run, k8s, etc).
+# ── Init system (dumb-init) → SIGTERM + zombie reaping ──
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
 CMD ["supercronic", "-inotify", "/app/crontab"]
