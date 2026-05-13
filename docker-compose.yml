@@ -1,0 +1,34 @@
+services:
+  linkedin-pipeline:
+    build: .
+    image: linkedin-posts-pipeline:latest
+    container_name: linkedin-pipeline
+    restart: unless-stopped
+
+    env_file:
+      - .env
+
+    environment:
+      LINKEDIN_DATA_DIR: /data
+      TZ: Europe/Paris
+
+    volumes:
+      # Data persistante (history.db, output/, logs/, reports/)
+      - ./data:/data
+      # Surcharge optionnelle du crontab sans rebuild
+      # - ./docker/crontab.docker:/app/crontab:ro
+
+    # Limites de ressources (Chromium est gourmand)
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 512M
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

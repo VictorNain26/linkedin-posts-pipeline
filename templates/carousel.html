@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif; background: #0a0a0f; color: #f0f0f5; }
+
+  .slide {
+    width: 1080px;
+    height: 1350px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 100px 80px;
+    page-break-after: always;
+    position: relative;
+    background: #0a0a0f;
+  }
+  .slide:last-child { page-break-after: auto; }
+
+  .slide-number {
+    position: absolute;
+    top: 50px;
+    right: 60px;
+    font-size: 16px;
+    color: #444;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+  }
+
+  .branding {
+    position: absolute;
+    bottom: 50px;
+    left: 80px;
+    font-size: 15px;
+    color: #3b82f6;
+    font-weight: 600;
+    letter-spacing: 0.05em;
+  }
+
+  .slide-content {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+
+  .accent-line {
+    width: 72px;
+    height: 5px;
+    background: #3b82f6;
+    margin-bottom: 40px;
+    border-radius: 2px;
+  }
+
+  /* Slide 1 — Cover : maximise punch */
+  .slide-1 .main-text {
+    font-size: 64px;
+    font-weight: 700;
+    line-height: 1.15;
+    color: #f0f0f5;
+    letter-spacing: -0.02em;
+  }
+  .slide-1 .sub-text {
+    font-size: 28px;
+    line-height: 1.4;
+    color: #9ca3af;
+    margin-top: 32px;
+  }
+
+  /* Slides 2-6 — Body : équilibre lisibilité / densité */
+  .slide-body .main-text {
+    font-size: 44px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: #f0f0f5;
+    margin-bottom: 32px;
+  }
+  .slide-body .sub-text {
+    font-size: 28px;
+    line-height: 1.5;
+    color: #9ca3af;
+  }
+
+  /* Slide finale — CTA */
+  .slide-cta .main-text {
+    font-size: 40px;
+    font-weight: 600;
+    color: #3b82f6;
+    line-height: 1.3;
+  }
+  .slide-cta .sub-text {
+    font-size: 24px;
+    color: #d1d5db;
+    margin-top: 24px;
+    line-height: 1.5;
+  }
+
+  /* Save reminder (slide finale) */
+  .save-cue {
+    position: absolute;
+    bottom: 110px;
+    left: 80px;
+    right: 80px;
+    font-size: 18px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+</style>
+</head>
+<body>
+  {{SLIDES_HTML}}
+</body>
+</html>

@@ -1,0 +1,51 @@
+# LinkedIn pipeline crons — DÉSACTIVÉS en attente approbation Community Management API.
+#
+# Activation (après réception de l'email d'approbation) :
+#   1. Run oauth_setup.py via SSH tunnel pour générer les tokens (cf. README.md §Setup)
+#      → ce setup intègre le scope r_member_postAnalytics nécessaire aux analytics.
+#   2. crontab -e  → décommenter les 4 lignes ci-dessous (sans le # initial)
+#
+# Vérification après activation :
+#   crontab -l                                       # voir les crons actifs
+#   PIPELINE_MODE=veille ./pipeline.sh --dry-run     # tester sans publier
+#   tail -f ~/linkedin-posts-data/logs/cron.log      # observer un run réel
+#
+# ────────────────────────────────────────────────────────────────────────
+# PATH (Node nécessaire pour Puppeteer)
+# PATH=/home/victormoi/.nvm/versions/node/v22.17.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# SHELL=/bin/bash
+# HOME=/home/victormoi
+#
+# ── Posts carousel ──────────────────────────────────────────────────
+# Mardi 10h30 — mode evergreen (cible PME, angle business prospect)
+# 30 10 * * 2 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# Jeudi 10h30 — mode veille (cible devs/CTOs, angle technique)
+# 30 10 * * 4 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# ── Analytics daily ─────────────────────────────────────────────────
+# Tous les jours 21h00 — fetch métriques des 30 derniers jours de posts
+# 0 21 * * * cd /home/victormoi/linkedin-posts && ./fetch_analytics.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# ── Healthcheck ─────────────────────────────────────────────────────
+# Tous les jours 08h00 (refresh token tous les 50j, vérif RSS, disk, activity)
+# 0 8 * * * cd /home/victormoi/linkedin-posts && ./healthcheck.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+#
+# ── Rapport hebdomadaire ────────────────────────────────────────────
+# Lundi 07h00 — synthèse semaine N-1 + envoi par email
+# 0 7 * * 1 cd /home/victormoi/linkedin-posts && ./weekly_report.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+# ────────────────────────────────────────────────────────────────────────
+#
+# Variables d'environnement requises (dans .env, mode 600) :
+# - ANTHROPIC_API_KEY        : génération des posts (Sonnet + Haiku)
+# - LI_CLIENT_ID/SECRET      : OAuth LinkedIn app
+# - LI_ACCESS_TOKEN/REFRESH  : tokens utilisateur (générés via oauth_setup.py)
+# - LI_PERSON_URN            : URN du compte LinkedIn de Victor
+# - GMAIL_SENDER             : adresse Gmail d'envoi du rapport hebdo
+# - GMAIL_APP_PASSWORD       : mot de passe d'application Google (Gmail SMTP)
+#                              voir https://support.google.com/accounts/answer/185833
+#
+# Notes :
+# - Mode auto-détecté via weekday dans config.py::current_mode().
+# - Format auto-décidé par format_selector.py (carousel default, text/poll si streak ≥ 3).
+# - Aucun fallback silencieux : si RSS vide ou pipeline fail → exit non-0.

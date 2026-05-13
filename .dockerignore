@@ -1,0 +1,41 @@
+# Secrets & runtime data — NEVER copy into image
+.env
+*.pem
+*.key
+credentials*
+
+# Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+.tmp_test_data/
+
+# Node artifacts (Dockerfile installe Puppeteer from scratch)
+node_modules/
+package.json
+package-lock.json
+
+# Runtime data (use volume mount instead)
+data/
+logs/
+output/
+reports/
+*.db
+*.lock
+
+# Git & dev
+.git/
+.gitignore
+.gitattributes
+
+# Docs / IDE
+.vscode/
+.idea/
+.DS_Store
+*.swp
+README.md
+LICENSE
+
+# CI artifacts
+.github/

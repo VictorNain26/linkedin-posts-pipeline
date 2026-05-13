@@ -1,0 +1,19 @@
+# Force LF line endings everywhere — critical for bash scripts to run on Linux
+* text=auto eol=lf
+
+# Binary
+*.pdf binary
+*.png binary
+*.jpg binary
+*.ico binary
+
+# Explicit LF for shell + executables
+*.sh text eol=lf
+*.py text eol=lf
+*.js text eol=lf
+*.html text eol=lf
+*.txt text eol=lf
+*.md text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+Dockerfile text eol=lf

@@ -1,0 +1,20 @@
+# Crontab embarqué pour Docker (supercronic).
+# Pas de PATH manuel : Docker /usr/local/bin déjà OK.
+# Logs : supercronic logge sur stdout/stderr → docker logs.
+#
+# Format : minute hour day month weekday command
+
+# Mardi 10h30 — evergreen PME
+30 10 * * 2 cd /app && ./pipeline.sh
+
+# Jeudi 10h30 — veille dev
+30 10 * * 4 cd /app && ./pipeline.sh
+
+# Daily 21h — analytics
+0 21 * * * cd /app && ./fetch_analytics.sh
+
+# Daily 8h — healthcheck
+0 8 * * * cd /app && ./healthcheck.sh
+
+# Lundi 7h — weekly report
+0 7 * * 1 cd /app && ./weekly_report.sh
