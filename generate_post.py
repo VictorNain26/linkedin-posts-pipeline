@@ -28,6 +28,16 @@ import re
 import sys
 import time
 
+from agents import (
+    ANGLE_TOOL,
+    CTA_COMMENT_TOOL,
+    HOOK_JUDGE_TOOL,
+    HOOK_VARIANTS_TOOL,
+    PAIN_TOOL,
+    SLIDES_TOOL,
+    _load_learnings_block,
+    _system_with_learnings,
+)
 from anthropic_client import call_tool
 from config import (
     ANTI_AI_PATTERNS,
@@ -35,9 +45,7 @@ from config import (
     CTA_SLIDE_TEXT,
     HAIKU_MODEL,
     HASHTAGS,
-    HOOK_VARIATIONS_COUNT,
     KEYWORD_OVERLAP_THRESHOLD,
-    LEARNINGS_PATH,
     MAX_DETECTOR_RETRIES,
     PROFILE_URL,
     SLIDE_COUNT_MAX,
@@ -45,216 +53,22 @@ from config import (
     SLIDE_COUNT_TARGET,
     SONNET_MODEL,
     TOKEN_BUDGETS,
-    system_voice,
 )
 from format_selector import select_format
 from history import keyword_overlap_ratio
 
 
-# ──────────────────────────────────────────────────────────────
-# Learnings injection — bias automatique data-driven (cf. weekly_report.py)
-# ──────────────────────────────────────────────────────────────
-def _load_learnings_block() -> dict | None:
-    """Charge state/learnings.json si présent et valide. Retourne le 4e system block
-    avec cache_control: ephemeral, ou None si pas de learnings (fallback transparent).
-
-    Garde-fous :
-    - Si fichier absent / malformé → None (pipeline tourne comme avant, rétrocompat)
-    - Si learnings.json vide ou biases=[] → None
-    - Si learnings > 14 jours (stale) → None (force regen)
-    """
-    if not LEARNINGS_PATH.exists():
-        return None
-    try:
-        data = json.loads(LEARNINGS_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    biases = data.get("biases", [])
-    if not biases:
-        return None
-    # Anti-staleness : > 14j → ignore
-    try:
-        from datetime import datetime as _dt, timedelta as _td
-        gen_at = _dt.fromisoformat(data.get("generated_at", "1970-01-01"))
-        if _dt.now() - gen_at > _td(days=14):
-            return None
-    except (ValueError, TypeError):
-        pass
-
-    # Construit un block XML compact (limite 5 biases × ~30 tokens = ~150 tokens)
-    lines = ["<past_learnings>"]
-    lines.append(
-        f'<context generated_at="{data.get("generated_at", "?")}" '
-        f'based_on_posts="{data.get("based_on_posts", "?")}">'
-    )
-    lines.append(data.get("summary", "")[:400])
-    lines.append("</context>")
-    lines.append("<biases_to_apply>")
-    for b in biases[:5]:  # safety cap
-        lines.append(
-            f'  <bias type="{b.get("type","?")}" key="{b.get("key","?")}">'
-            f'{b.get("instruction","")}</bias>'
-        )
-    lines.append("</biases_to_apply>")
-    lines.append(
-        "<usage>Ces learnings sont des BIAS DOUX. Ils orientent tes choix mais "
-        "ne remplacent JAMAIS les règles statiques (factual grounding, voice, anti-patterns). "
-        "En cas de conflit, les règles statiques prévalent.</usage>"
-    )
-    lines.append("</past_learnings>")
-    return {
-        "type": "text",
-        "text": "\n".join(lines),
-        "cache_control": {"type": "ephemeral"},
-    }
-
-
-def _system_with_learnings() -> list[dict]:
-    """system_voice() étendu d'un 4e bloc si learnings disponibles."""
-    blocks = system_voice()
-    learn = _load_learnings_block()
-    if learn is not None:
-        blocks.append(learn)
-    return blocks
-
-# ──────────────────────────────────────────────────────────────
-# JSON Schemas (CCA-F D4 §3)
-# ──────────────────────────────────────────────────────────────
-PAIN_TOOL = {
-    "name": "submit_pains",
-    "description": "Submit 3 prospect pain formulations.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "pains": {
-                "type": "array",
-                "minItems": 3,
-                "maxItems": 3,
-                "items": {"type": "string", "minLength": 10},
-            }
-        },
-        "required": ["pains"],
-    },
-}
-
-ANGLE_TOOL = {
-    "name": "submit_angle",
-    "description": "Submit the contrarian angle and the visual hook of slide 1.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "angle": {"type": "string", "description": "Contrarian angle in one sentence"},
-            "hook": {"type": "string", "description": "Slide 1 hook, max 8 words", "maxLength": 80},
-        },
-        "required": ["angle", "hook"],
-    },
-}
-
-SLIDES_TOOL = {
-    "name": "submit_slides",
-    "description": (
-        f"Submit between {SLIDE_COUNT_MIN} and {SLIDE_COUNT_MAX} carousel slides. "
-        f"Target sweet spot: {SLIDE_COUNT_TARGET}. Use only what the content needs."
-    ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "slides": {
-                "type": "array",
-                "minItems": SLIDE_COUNT_MIN,
-                "maxItems": SLIDE_COUNT_MAX,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "main": {
-                            "type": "string",
-                            "description": "Main text of the slide, 1 idea, max 15 words",
-                        },
-                        "sub": {"type": "string", "description": "Optional supporting line, can be empty"},
-                    },
-                    "required": ["main"],
-                },
-            }
-        },
-        "required": ["slides"],
-    },
-}
-
-HOOK_VARIANTS_TOOL = {
-    "name": "submit_hook_variants",
-    "description": "Submit 3 LinkedIn feed hook variations (1 per formula).",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "variants": {
-                "type": "array",
-                "minItems": HOOK_VARIATIONS_COUNT,
-                "maxItems": HOOK_VARIATIONS_COUNT,
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "formula": {
-                            "type": "string",
-                            "enum": ["contrarian", "data", "prospect_question"],
-                        },
-                        "hook": {
-                            "type": "string",
-                            "minLength": 80,
-                            "maxLength": 210,
-                            "description": (
-                                "CIBLE : 100-140 chars (cutoff mobile = 80%+ du trafic 2026). "
-                                "Hard limit : 210 chars (cutoff desktop). "
-                                "Voix orale. Pas de buzzword. AUCUN détail inventé. "
-                                "PAS de template anglais reconnaissable type 'Here's what nobody tells you' "
-                                "(360Brew détecte sémantiquement les hooks copy-paste depuis mars 2026)."
-                            ),
-                        },
-                    },
-                    "required": ["formula", "hook"],
-                },
-            }
-        },
-        "required": ["variants"],
-    },
-}
-
-HOOK_JUDGE_TOOL = {
-    "name": "submit_hook_winner",
-    "description": "Pick the winning hook formula with a short justification.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "winner_formula": {"type": "string", "enum": ["contrarian", "data", "prospect_question"]},
-            "reason": {"type": "string", "maxLength": 300},
-        },
-        "required": ["winner_formula", "reason"],
-    },
-}
-
-CTA_COMMENT_TOOL = {
-    "name": "submit_cta_comment",
-    "description": "Submit the first comment as a CTA Victor posts under his own post.",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "comment": {
-                "type": "string",
-                "minLength": 60,
-                "maxLength": 400,
-                "description": (
-                    "CTA direct + bénéfice clair pour le prospect + canal d'action 'DM ouvert'. "
-                    "AUCUN lien externe (LinkedIn pénalise -80% les commentaires avec URL en 2026). "
-                    "PAS une question d'engagement, c'est une invitation à agir."
-                ),
-            }
-        },
-        "required": ["comment"],
-    },
-}
+# Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
+__all__ = [
+    "ANGLE_TOOL", "CTA_COMMENT_TOOL", "HOOK_JUDGE_TOOL", "HOOK_VARIANTS_TOOL",
+    "PAIN_TOOL", "SLIDES_TOOL",
+    "_load_learnings_block", "_system_with_learnings",
+]
 
 
 # ──────────────────────────────────────────────────────────────
-# Agents
+# Agents (les 8 fonctions agent1..agent8 ci-dessous)
+# Les schemas tool_use et l'injection learnings ont été extraits dans agents/
 # ──────────────────────────────────────────────────────────────
 def agent1_pain_excavator(article_ctx: str) -> list[str]:
     """Identifie 3 douleurs RÉELLES du prospect, à la lecture de l'article."""
