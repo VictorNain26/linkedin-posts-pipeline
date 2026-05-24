@@ -39,4 +39,20 @@ def tmp_data_dir(tmp_path, monkeypatch):
     importlib.reload(history)
     importlib.reload(format_selector)
 
+    # Reload aussi les modules qui ont importé LEARNINGS_PATH au module-level
+    # (sinon ils gardent la référence à l'ancienne valeur avant monkeypatch)
+    try:
+        import agents.system
+        importlib.reload(agents.system)
+    except ImportError:
+        pass
+    try:
+        import import_analytics_csv
+        importlib.reload(import_analytics_csv)
+    except ImportError:
+        pass
+
+    # Init explicite de la DB pour les tests qui font des INSERT sans passer par un helper
+    history.init_db()
+
     yield data_dir

@@ -52,14 +52,15 @@ class TestSelectFormat:
         assert fmt in ("text", "poll")
         assert "switch" in reason.lower() or "carrousels d" in reason.lower()
 
-    def test_alternates_text_poll(self, tmp_data_dir):
+    def test_switches_to_text_after_streak(self, tmp_data_dir):
+        """Polls retirés en mai 2026 (reach trap). Le switch carousel → text-only.
+        Voir format_selector.py + config.py FORMAT_POLL deprecated."""
         import history
         from format_selector import select_format
 
         history.init_db()
-        # Streak avec last non-carousel = text → next switch doit être poll
         with sqlite3.connect(history.DB_PATH) as conn:
             _seed_recent(conn, ["carousel", "carousel", "carousel", "text"])
 
         fmt, _ = select_format()
-        assert fmt == "poll"
+        assert fmt == "text"
