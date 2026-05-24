@@ -14,6 +14,7 @@ Accès :
 """
 
 import json
+import re
 import sqlite3
 import sys
 from datetime import datetime
@@ -22,6 +23,34 @@ from pathlib import Path
 import pandas as pd
 import pypdfium2 as pdfium
 import streamlit as st
+
+
+# ──────────────────────────────────────────────────────────────
+# Path safety helpers (R2 — anti path traversal sur file_uploader)
+# ──────────────────────────────────────────────────────────────
+_SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
+
+
+def _safe_filename(raw: str, fallback: str = "upload") -> str:
+    """Strip tout ce qui n'est pas alphanumeric/dot/underscore/dash + tronque à 100 chars.
+    Bloque path traversal (../) et caractères shell dangereux. Garantit un nom non-vide."""
+    cleaned = _SAFE_FILENAME_RE.sub("_", raw).strip("._-")
+    cleaned = cleaned[:100]
+    return cleaned or fallback
+
+
+def _safe_upload_path(upload_dir: Path, raw_filename: str) -> Path:
+    """Construit un chemin de fichier dans upload_dir, garanti contenu dans le dossier.
+    Lève ValueError si le path résolu sort de upload_dir (defense in depth)."""
+    upload_dir = upload_dir.resolve()
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = _safe_filename(raw_filename)
+    candidate = (upload_dir / safe_name).resolve()
+    try:
+        candidate.relative_to(upload_dir)
+    except ValueError as e:
+        raise ValueError(f"path escapes upload dir: {raw_filename!r} → {candidate}") from e
+    return candidate
 
 from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR
 
@@ -535,9 +564,14 @@ def page_analytics():
             label_visibility="collapsed",
         )
         if uploaded is not None:
-            upload_dir = Path(OUTPUT_DIR).parent / "uploads"
-            upload_dir.mkdir(exist_ok=True)
-            saved_path = upload_dir / uploaded.name
+            try:
+                saved_path = _safe_upload_path(
+                    Path(OUTPUT_DIR).parent / "uploads",
+                    uploaded.name,
+                )
+            except ValueError as e:
+                st.error(f"❌ Nom de fichier rejeté : {e}")
+                return
             saved_path.write_bytes(uploaded.getbuffer())
 
             try:

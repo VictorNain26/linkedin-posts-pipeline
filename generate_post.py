@@ -818,7 +818,8 @@ def generate(topic_input=None) -> dict:
         print(f"[generate] trying news {idx + 1}/{len(news_list)}: {topic[:80]}", file=sys.stderr)
         try:
             slides, angle = _run_once(article_ctx)
-        except Exception as e:
+        except (RuntimeError, KeyError, ValueError, TypeError) as e:
+            # Anthropic API en échec ou retour mal formé (schema mismatch) → on essaie la news suivante
             last_error = f"news {idx}: {e}"
             print(f"[generate] run failed on news {idx + 1}: {e}", file=sys.stderr)
             continue

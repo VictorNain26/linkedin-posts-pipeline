@@ -9,21 +9,18 @@ Patterns CCA-F appliqués :
 """
 
 import os
-import sys
 import time
 
 from anthropic import Anthropic, APIError, APIStatusError, RateLimitError
 from dotenv import load_dotenv
 
 from config import ANTHROPIC_MAX_ATTEMPTS, ANTHROPIC_RETRY_BASE_DELAY
+from log import get_logger
 
 load_dotenv()
 
 _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
-
-
-def _log(msg: str) -> None:
-    print(f"[anthropic] {msg}", file=sys.stderr)
+logger = get_logger(__name__)
 
 
 def call_tool(
@@ -59,19 +56,27 @@ def call_tool(
         except RateLimitError as e:
             last_err = e
             wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt) * 2
-            _log(f"RateLimit attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
+            logger.warning(
+                "RateLimit attempt %d/%d, sleeping %ds", attempt + 1, ANTHROPIC_MAX_ATTEMPTS, wait
+            )
             time.sleep(wait)
         except APIStatusError as e:
             last_err = e
             if e.status_code and 500 <= e.status_code < 600:
                 wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
-                _log(f"{e.status_code} attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}, sleeping {wait}s")
+                logger.warning(
+                    "HTTP %d attempt %d/%d, sleeping %ds",
+                    e.status_code, attempt + 1, ANTHROPIC_MAX_ATTEMPTS, wait
+                )
                 time.sleep(wait)
             else:
                 raise
         except APIError as e:
             last_err = e
             wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
-            _log(f"APIError attempt {attempt+1}/{ANTHROPIC_MAX_ATTEMPTS}: {e}, sleeping {wait}s")
+            logger.warning(
+                "APIError attempt %d/%d: %s, sleeping %ds",
+                attempt + 1, ANTHROPIC_MAX_ATTEMPTS, e, wait
+            )
             time.sleep(wait)
     raise RuntimeError(f"Anthropic call_tool failed after {ANTHROPIC_MAX_ATTEMPTS} attempts: {last_err}")

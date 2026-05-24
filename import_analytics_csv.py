@@ -302,7 +302,8 @@ def import_xlsx(path: Path) -> dict:
                 if p["interactions"] is not None:
                     upsert_analytics(post_id, "INTERACTION", p["interactions"])
                     summary["metrics_written"] += 1
-        except Exception as e:
+        except (KeyError, ValueError, AttributeError, IndexError, OSError) as e:
+            # Parser pandas / cellule manquante / format LinkedIn modifié — on garde le warning
             summary["warnings"].append(f"posts sheet failed: {e}")
             print(f"[import] WARN posts: {e}", file=sys.stderr)
     else:
@@ -319,7 +320,8 @@ def import_xlsx(path: Path) -> dict:
                 t = total if date_iso == max(d for d, _ in growth_rows) else None
                 upsert_follower_growth(date_iso, new_fol, t)
                 summary["follower_days_imported"] += 1
-        except Exception as e:
+        except (KeyError, ValueError, AttributeError, IndexError, OSError) as e:
+            # Parser pandas / cellule manquante / format LinkedIn modifié — on garde le warning
             summary["warnings"].append(f"followers sheet failed: {e}")
             print(f"[import] WARN followers: {e}", file=sys.stderr)
     else:
@@ -335,7 +337,8 @@ def import_xlsx(path: Path) -> dict:
                 snapshot_at = datetime.now().isoformat()
                 insert_audience_snapshot(snapshot_at, demo_rows)
                 summary["demo_rows_imported"] = len(demo_rows)
-        except Exception as e:
+        except (KeyError, ValueError, AttributeError, IndexError, OSError) as e:
+            # Parser pandas / cellule manquante / format LinkedIn modifié — on garde le warning
             summary["warnings"].append(f"demographics sheet failed: {e}")
             print(f"[import] WARN demographics: {e}", file=sys.stderr)
     else:

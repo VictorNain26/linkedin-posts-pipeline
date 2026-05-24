@@ -156,7 +156,8 @@ def fetch_all_for_post(post_id: int, linkedin_post_id: str, token: str) -> dict[
             count = fetch_metric(linkedin_post_id, metric, token)
         except MissingAnalyticsScopeError:
             raise
-        except Exception as e:
+        except (requests.RequestException, ValueError, KeyError, RuntimeError) as e:
+            # Métrique unique en échec — continue avec les autres
             print(f"[analytics] {metric} for {linkedin_post_id}: {e}", file=sys.stderr)
             continue
         if count is None:

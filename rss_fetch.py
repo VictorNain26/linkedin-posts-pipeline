@@ -78,8 +78,8 @@ def _strip_html(html: str) -> str:
     parser = _HTMLStripper()
     try:
         parser.feed(html)
-    except Exception:
-        # HTMLParser intolerant on some inputs — fallback regex
+    except (AssertionError, ValueError, UnicodeDecodeError):
+        # HTMLParser intolerant on malformed input — fallback regex
         return re.sub(r"<[^>]+>", " ", html)
     return re.sub(r"\s+", " ", parser.text()).strip()
 
@@ -133,7 +133,8 @@ def fetch_recent_items(hours: int = RSS_LOOKBACK_HOURS) -> list[dict]:
                         "content": "",
                     }
                 )
-        except Exception as e:
+        except (requests.RequestException, OSError, AttributeError, ValueError) as e:
+            # Network, feedparser malformé, ou source RSS down — on isole, on continue avec les autres
             failures.append(f"{url}: {e}")
     if failures:
         print(f"[rss] {len(failures)} source(s) failed: " + " | ".join(failures), file=sys.stderr)
@@ -301,7 +302,8 @@ def get_top_news(n: int = 5, min_score: int = 6) -> list[dict]:
 
     try:
         scored = score_relevance(items)
-    except Exception as e:
+    except (RuntimeError, KeyError, ValueError) as e:
+        # Anthropic API down / schema mismatch / malformed response → fallback non-scored
         print(f"[rss] scoring failed: {e} — returning unscored top items", file=sys.stderr)
         return items[:n]
 

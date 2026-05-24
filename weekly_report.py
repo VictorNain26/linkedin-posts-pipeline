@@ -399,7 +399,8 @@ def generate_for_last_week() -> Path:
     # ── Analyse Claude Sonnet → learnings.json + section markdown ──
     try:
         learnings = generate_learnings(days=28)
-    except Exception as e:
+    except (RuntimeError, KeyError, ValueError, OSError) as e:
+        # Anthropic API échec / schema mismatch / write learnings.json échec → on continue avec rapport vide
         print(f"[weekly-report] WARN: learnings generation failed: {e}", file=sys.stderr)
         learnings = {}
     markdown += _render_learnings_section(learnings)

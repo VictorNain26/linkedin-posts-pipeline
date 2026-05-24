@@ -6,20 +6,31 @@ requires-python = ">=3.13"
 license = "MIT"
 authors = [{ name = "Victor Lenain" }]
 
+# ── Deps PRODUCTION (source unique de vérité) ──
+# requirements.txt est généré depuis cette section. Ne PAS éditer requirements.txt
+# manuellement — voir scripts/sync_requirements.sh.
 dependencies = [
     "anthropic>=0.101.0",
     "feedparser>=6.0.12",
     "requests>=2.34.0",
     "python-dotenv>=1.2.2",
+    # Dashboard Streamlit + analytics
+    "streamlit>=1.35.0",
+    "pandas>=2.2.0",
+    "pypdfium2>=4.30.0",
+    # Lecture XLSX LinkedIn Analytics export
+    "openpyxl>=3.1.0",
 ]
 
 [project.optional-dependencies]
+# ── Deps DEV (pas dans requirements.txt, installées via `pip install -e ".[dev]"`) ──
 dev = [
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.12",
     "mypy>=2.1.0",
     "types-requests",
+    "pip-tools>=7.4.0",  # pour générer requirements.txt depuis pyproject.toml
 ]
 
 [build-system]
