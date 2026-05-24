@@ -5,6 +5,14 @@ __pycache__/
 .venv/
 node_modules/
 
+# Cache pytest/coverage
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
 .env
 .env.bak*
 *.pem
