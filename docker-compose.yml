@@ -32,7 +32,10 @@ services:
 
     volumes:
       # Persistance des données (history.db, output/, logs/, reports/)
-      - ./data:/data
+      # Pointe vers le data dir réel utilisé en CLI native (~/linkedin-posts-data) pour
+      # garantir Docker et CLI partagent la même DB et les mêmes outputs.
+      # Override via .env si besoin (export LINKEDIN_DATA_DIR=/path/absolu).
+      - ${LINKEDIN_DATA_DIR:-../linkedin-posts-data}:/data
       # Override optionnel du crontab sans rebuild
       # - ./docker/crontab.docker:/app/crontab:ro
 
@@ -61,10 +64,87 @@ services:
         max-size: "10m"
         max-file: "3"
 
-    # Sécurité : pas de privilèges, pas d'accès au host docker socket
-    security_opt:
-      - no-new-privileges:true
+    # Sécurité : `cap_drop: ALL` reste. `no-new-privileges:true` retiré car
+    # incompatible avec l'ENTRYPOINT dumb-init du Dockerfile (qui a un setuid bit).
+    # Sans cap_drop, no-new-privileges n'apporte plus grand-chose : on garde cap_drop.
     read_only: false  # supercronic écrit dans /tmp et /app/crontab (inotify)
+    cap_drop:
+      - ALL
+
+  # ──────────────────────────────────────────────────────────────
+  # Dashboard Streamlit — visualisation historique / analytics / tests
+  # + toggle publi auto (touche ~/data/.publi_paused, lu par pipeline.sh)
+  #
+  # ⚠️  Accessible sur tout le LAN sans auth — adapté home network solo.
+  #     Pour exposer à du monde : sidecar Caddy/nginx + Basic Auth ou OAuth.
+  # ──────────────────────────────────────────────────────────────
+  linkedin-dashboard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: linkedin-posts-pipeline:latest  # même image que linkedin-pipeline
+    container_name: linkedin-dashboard
+    restart: unless-stopped
+    # Pas de `init: true` : dumb-init est déjà en ENTRYPOINT du Dockerfile et reap les
+    # zombies sans nécessiter CAP_SYS_ADMIN. Streamlit est mono-process, ça suffit.
+
+    env_file:
+      - .env
+
+    environment:
+      LINKEDIN_DATA_DIR: /data
+      TZ: Europe/Paris
+      PYTHONPATH: /app
+
+    volumes:
+      # Lecture seule du code, lecture/écriture sur /data (toggle pause + analytics)
+      - ./:/app:ro
+      - ${LINKEDIN_DATA_DIR:-../linkedin-posts-data}:/data
+
+    # Bind sur 0.0.0.0 → accessible depuis n'importe quelle IP du LAN.
+    # Si tu veux restreindre à localhost : "127.0.0.1:8501:8501"
+    ports:
+      - "0.0.0.0:8501:8501"
+
+    # Override de la CMD du Dockerfile (qui est supercronic par défaut)
+    command:
+      - streamlit
+      - run
+      - /app/dashboard.py
+      - --server.address=0.0.0.0
+      - --server.port=8501
+      - --server.headless=true
+      - --browser.gatherUsageStats=false
+
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8501/_stcore/health', timeout=5).read()==b'ok' else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+
+    networks:
+      - default
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # NOTE : `no-new-privileges:true` retiré ici car incompatible avec l'ENTRYPOINT
+    # dumb-init du Dockerfile (dumb-init a un setuid bit, refusé par no-new-privileges).
+    # `cap_drop: ALL` couvre déjà 90% du risque. Si tu veux les deux, change l'ENTRYPOINT
+    # du dashboard pour bypass dumb-init (Streamlit est mono-process, pas besoin).
     cap_drop:
       - ALL
 

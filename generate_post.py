@@ -37,6 +37,7 @@ from config import (
     HASHTAGS,
     HOOK_VARIATIONS_COUNT,
     KEYWORD_OVERLAP_THRESHOLD,
+    LEARNINGS_PATH,
     MAX_DETECTOR_RETRIES,
     PROFILE_URL,
     SLIDE_COUNT_MAX,
@@ -48,6 +49,73 @@ from config import (
 )
 from format_selector import select_format
 from history import keyword_overlap_ratio
+
+
+# ──────────────────────────────────────────────────────────────
+# Learnings injection — bias automatique data-driven (cf. weekly_report.py)
+# ──────────────────────────────────────────────────────────────
+def _load_learnings_block() -> dict | None:
+    """Charge state/learnings.json si présent et valide. Retourne le 4e system block
+    avec cache_control: ephemeral, ou None si pas de learnings (fallback transparent).
+
+    Garde-fous :
+    - Si fichier absent / malformé → None (pipeline tourne comme avant, rétrocompat)
+    - Si learnings.json vide ou biases=[] → None
+    - Si learnings > 14 jours (stale) → None (force regen)
+    """
+    if not LEARNINGS_PATH.exists():
+        return None
+    try:
+        data = json.loads(LEARNINGS_PATH.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    biases = data.get("biases", [])
+    if not biases:
+        return None
+    # Anti-staleness : > 14j → ignore
+    try:
+        from datetime import datetime as _dt, timedelta as _td
+        gen_at = _dt.fromisoformat(data.get("generated_at", "1970-01-01"))
+        if _dt.now() - gen_at > _td(days=14):
+            return None
+    except (ValueError, TypeError):
+        pass
+
+    # Construit un block XML compact (limite 5 biases × ~30 tokens = ~150 tokens)
+    lines = ["<past_learnings>"]
+    lines.append(
+        f'<context generated_at="{data.get("generated_at", "?")}" '
+        f'based_on_posts="{data.get("based_on_posts", "?")}">'
+    )
+    lines.append(data.get("summary", "")[:400])
+    lines.append("</context>")
+    lines.append("<biases_to_apply>")
+    for b in biases[:5]:  # safety cap
+        lines.append(
+            f'  <bias type="{b.get("type","?")}" key="{b.get("key","?")}">'
+            f'{b.get("instruction","")}</bias>'
+        )
+    lines.append("</biases_to_apply>")
+    lines.append(
+        "<usage>Ces learnings sont des BIAS DOUX. Ils orientent tes choix mais "
+        "ne remplacent JAMAIS les règles statiques (factual grounding, voice, anti-patterns). "
+        "En cas de conflit, les règles statiques prévalent.</usage>"
+    )
+    lines.append("</past_learnings>")
+    return {
+        "type": "text",
+        "text": "\n".join(lines),
+        "cache_control": {"type": "ephemeral"},
+    }
+
+
+def _system_with_learnings() -> list[dict]:
+    """system_voice() étendu d'un 4e bloc si learnings disponibles."""
+    blocks = system_voice()
+    learn = _load_learnings_block()
+    if learn is not None:
+        blocks.append(learn)
+    return blocks
 
 # ──────────────────────────────────────────────────────────────
 # JSON Schemas (CCA-F D4 §3)
@@ -132,8 +200,14 @@ HOOK_VARIANTS_TOOL = {
                         "hook": {
                             "type": "string",
                             "minLength": 80,
-                            "maxLength": 220,
-                            "description": "150-200 chars. Voix orale. Pas de buzzword. Pas de détail inventé.",
+                            "maxLength": 210,
+                            "description": (
+                                "CIBLE : 100-140 chars (cutoff mobile = 80%+ du trafic 2026). "
+                                "Hard limit : 210 chars (cutoff desktop). "
+                                "Voix orale. Pas de buzzword. AUCUN détail inventé. "
+                                "PAS de template anglais reconnaissable type 'Here's what nobody tells you' "
+                                "(360Brew détecte sémantiquement les hooks copy-paste depuis mars 2026)."
+                            ),
                         },
                     },
                     "required": ["formula", "hook"],
@@ -159,18 +233,18 @@ HOOK_JUDGE_TOOL = {
 
 CTA_COMMENT_TOOL = {
     "name": "submit_cta_comment",
-    "description": "Submit the first comment with source citation + CTA Victor posts under his own post.",
+    "description": "Submit the first comment as a CTA Victor posts under his own post.",
     "input_schema": {
         "type": "object",
         "properties": {
             "comment": {
                 "type": "string",
-                "minLength": 100,
-                "maxLength": 550,
+                "minLength": 60,
+                "maxLength": 400,
                 "description": (
-                    "1. Citation de la source article (URL ou Source: ...) — transparence. "
-                    "2. CTA direct avec livrable explicite + lien d'action (victorlenain.fr ou DM). "
-                    "Pas une question d'engagement, une invitation à agir."
+                    "CTA direct + bénéfice clair pour le prospect + canal d'action 'DM ouvert'. "
+                    "AUCUN lien externe (LinkedIn pénalise -80% les commentaires avec URL en 2026). "
+                    "PAS une question d'engagement, c'est une invitation à agir."
                 ),
             }
         },
@@ -186,7 +260,7 @@ def agent1_pain_excavator(article_ctx: str) -> list[str]:
     """Identifie 3 douleurs RÉELLES du prospect, à la lecture de l'article."""
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
             "Mets-toi dans la tête de l'AUDIENCE (cf. system). Cette personne lit l'article ci-dessus.\n\n"
@@ -207,16 +281,46 @@ def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
     """Trouve un angle éditorial business, ancré sur les douleurs prospect."""
     return call_tool(
         model=SONNET_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            "Douleurs prospect identifiées :\n- " + "\n- ".join(pains) + "\n\n"
-            "Trouve l'angle éditorial qui :\n"
-            "1. COMMENTE l'article (pas raconte une histoire perso fictive)\n"
-            "2. PARLE aux douleurs ci-dessus du décideur\n"
-            "3. SURPREND ou contredit une idée reçue largement répandue dans l'audience business\n\n"
-            "Hook visuel : première ligne du carrousel (slide 1), max 8 mots, percutante. "
-            "Doit interpeller le décideur, PAS raconter Victor."
+            "<pains_identified>\n"
+            + "\n".join(f"- {p}" for p in pains)
+            + "\n</pains_identified>\n\n"
+            "<task>\n"
+            "Trouve l'angle éditorial UNIQUE de ce post pour la cible PME/CTO non-tech.\n"
+            "L'angle doit faire 3 choses simultanément :\n"
+            "1. COMMENTER l'article (l'article reste la source factuelle — pas d'invention)\n"
+            "2. PARLER à AU MOINS UNE des douleurs ci-dessus, dans le vocabulaire de la cible\n"
+            "3. SURPRENDRE ou contredire une idée reçue largement répandue chez les décideurs\n"
+            "</task>\n\n"
+            "<critical>\n"
+            "PIÈGE PRINCIPAL : l'article peut être très tech (Codex, GPT-5, API). Ton angle\n"
+            "NE DOIT PAS rester sur le terrain tech. Il doit PIVOTER vers le terrain business.\n"
+            "Le PDG d'usine 50 personnes doit reconnaître SA douleur dans ton angle.\n"
+            "</critical>\n\n"
+            "<bad_examples>\n"
+            "<bad_angle>\"OpenAI lance Codex. Il automatise la production de code.\"</bad_angle>\n"
+            "  → Reste tech, ne parle d'aucune douleur business.\n"
+            "<bad_angle>\"Les meilleurs devs adoptent Codex. Pas les autres.\"</bad_angle>\n"
+            "  → Touche les devs, pas le décideur PME non-tech.\n"
+            "<bad_angle>\"L'IA va remplacer 30% des développeurs.\"</bad_angle>\n"
+            "  → Prédiction non sourcée + clivant sans valeur ajoutée.\n"
+            "</bad_examples>\n\n"
+            "<good_examples>\n"
+            "<good_angle>\"Un label Gartner 'leader' ne te dit pas combien ça coûte chez toi.\"</good_angle>\n"
+            "  → Pivote du fait tech (classement) vers la douleur budget.\n"
+            "<good_angle>\"L'outil change. Pas le vrai problème : qui l'installe et le maintient ?\"</good_angle>\n"
+            "  → Pivote vers la douleur dépendance prestataire + mise en prod fragile.\n"
+            "<good_angle>\"Tu signes pour Codex aujourd'hui. Tu changes d'avis dans 18 mois ?\"</good_angle>\n"
+            "  → Pivote vers la douleur lock-in fournisseur.\n"
+            "</good_examples>\n\n"
+            "<hook_visual_constraints>\n"
+            "Hook slide 1 : 1 phrase MAX 8 mots, percutante, vue mobile.\n"
+            "- Interpelle le décideur directement (\"Tu\", \"Ton\", verbe d'action)\n"
+            "- N'inclut PAS le nom de Victor\n"
+            "- N'inclut PAS de jargon tech non traduit\n"
+            "</hook_visual_constraints>"
         ),
         tool=ANGLE_TOOL,
         max_tokens=TOKEN_BUDGETS["angle"],
@@ -227,28 +331,46 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
     """Structure les slides en commentant l'article pour le décideur."""
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
+            f"<context>\n"
             f"Angle retenu : {angle['angle']}\n"
-            f"Hook slide 1 : {angle['hook']}\n\n"
+            f"Hook slide 1 (à reprendre exactement) : {angle['hook']}\n"
+            f"</context>\n\n"
+            f"<task>\n"
             f"Structure un carrousel LinkedIn entre {SLIDE_COUNT_MIN} et {SLIDE_COUNT_MAX} slides "
-            f"(cible idéale : {SLIDE_COUNT_TARGET}) QUI COMMENTE L'ARTICLE pour le décideur.\n\n"
-            "Le nombre de slides dépend du contenu :\n"
-            f"- {SLIDE_COUNT_MIN}-6 slides si le sujet est simple\n"
-            "- 7-8 slides pour un sujet riche avec plusieurs implications\n"
-            f"- 9-{SLIDE_COUNT_MAX} slides UNIQUEMENT si vraiment nécessaire\n\n"
-            "Structure type :\n"
-            "- Slide 1 : Hook visuel (utilise exactement la phrase fournie)\n"
-            "- Slide 2 : Ce que l'article annonce, en 1 phrase clé (résumé factuel sans invention)\n"
-            "- Slides intermédiaires : implications BUSINESS pour le décideur "
-            "(ROI, coût, risque, équipe, conformité)\n"
-            "- Avant-dernière slide : Recommandation actionnable (cadre de décision)\n"
-            f"- DERNIÈRE slide : CTA — DOIT contenir '{CTA_SLIDE_TEXT}'\n\n"
-            "Chaque slide = 1 idée. main = phrase punchy ; sub = développement court (optionnel).\n"
-            "Privilégie un carrousel COURT et DENSE plutôt que long et délayé.\n"
-            "À éviter : chiffres inventés, anecdotes perso, situations fictives. "
-            "Si un point manque de fact, retire la slide."
+            f"(cible idéale : {SLIDE_COUNT_TARGET}). Chaque slide commente l'article pour le décideur.\n"
+            f"</task>\n\n"
+            f"<slide_count_guide>\n"
+            f"- {SLIDE_COUNT_MIN}-6 slides : sujet simple, 1-2 implications business\n"
+            f"- 7-8 slides : sujet riche avec plusieurs implications (ROI + risque + équipe + conformité)\n"
+            f"- 9-{SLIDE_COUNT_MAX} slides : uniquement si vraiment nécessaire (rare)\n"
+            f"</slide_count_guide>\n\n"
+            f"<structure_template>\n"
+            f"- Slide 1 : reprend EXACTEMENT le hook visuel fourni\n"
+            f"- Slide 2 : résumé factuel de l'article en 1 phrase clé (zéro invention)\n"
+            f"- Slides intermédiaires (3 à n-1) : implications business pour le décideur — "
+            f"ROI, coût, risque, équipe, conformité, lock-in, time-to-value\n"
+            f"- Avant-dernière slide : recommandation actionnable (cadre de décision, 3 questions à poser, "
+            f"checklist de 3-5 items, etc.)\n"
+            f"- DERNIÈRE slide : CTA — DOIT contenir le texte '{CTA_SLIDE_TEXT}'\n"
+            f"</structure_template>\n\n"
+            "<slide_rules>\n"
+            "- 1 slide = 1 idée. Pas plus.\n"
+            "- main = phrase punchy (15 mots max). sub = développement court (optionnel).\n"
+            "- Carrousel COURT et DENSE > long et délayé. Si un point manque de fact, retire la slide.\n"
+            "- Chiffres uniquement si présents dans l'article source. Jamais inventés.\n"
+            "</slide_rules>\n\n"
+            "<bad_examples>\n"
+            "<bad_slide>\"L'IA va révolutionner ton business !\" (cliché vide, pas de fact ancré)</bad_slide>\n"
+            "<bad_slide>\"73% des PME perdent 4h/semaine\" (chiffre fabriqué non sourcé article)</bad_slide>\n"
+            "<bad_slide>\"Mardi dernier, j'ai vu un client...\" (anecdote inventée)</bad_slide>\n"
+            "</bad_examples>\n\n"
+            "<good_examples>\n"
+            "<good_slide>main: \"La CNIL contrôle les pratiques, pas les intentions.\" sub: \"Bug fournisseur, erreur de config : peu importe. Ton périmètre, tes données.\"</good_slide>\n"
+            "<good_slide>main: \"3 questions à poser avant de signer.\" sub: \"Qui est responsable de traitement ? Où vont les données ? Qui prévient la CNIL ?\"</good_slide>\n"
+            "</good_examples>"
         ),
         tool=SLIDES_TOOL,
         max_tokens=TOKEN_BUDGETS["architect"],
@@ -264,20 +386,40 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
     )
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            "Réécris ce carrousel dans la voix exacte de Victor (cf. règles voix dans system).\n\n"
-            "PRÉSERVE :\n"
-            "- la structure des slides (même nombre, même ordre)\n"
-            "- l'angle, le hook slide 1, le CTA final\n"
-            "- les faits de l'article source (rien d'autre comme source factuelle)\n\n"
-            "MODIFIE :\n"
-            "- le phrasé pour matcher la voix orale + courte de Victor\n\n"
-            "À éviter : ajouter chiffres, anecdotes, situations qui ne sont pas dans l'outline "
-            "ou l'article. Si un point manque de fact, garde-le tel quel ou enlève-le. "
-            "Pas de détail inventé pour rendre crédible.\n\n"
-            "Outline à réécrire :\n" + outline_str
+            "<task>\n"
+            "Réécris le carrousel ci-dessous dans la voix exacte de Victor (cf. <voice> system).\n"
+            "Tu es un ré-écrivain, pas un créatif : tu changes le phrasé, pas le fond.\n"
+            "</task>\n\n"
+            "<preserve>\n"
+            "- Structure : même nombre de slides, même ordre\n"
+            "- Angle, hook slide 1, CTA final : intacts\n"
+            "- Faits de l'article source : seule source factuelle autorisée\n"
+            "</preserve>\n\n"
+            "<modify>\n"
+            "- Phrasé pour matcher la voix orale courte de Victor\n"
+            "- Casser les phrases trop longues en 2 phrases courtes\n"
+            "- Remplacer le formel par l'oral (\"il faut\" → \"tu dois\", etc.)\n"
+            "- Appliquer les règles de syntaxe FR native (<french_syntax_rules>)\n"
+            "</modify>\n\n"
+            "<forbidden>\n"
+            "- AJOUTER chiffres, anecdotes, situations non présents dans l'outline ou l'article\n"
+            "- Inventer des détails pour rendre \"plus crédible\"\n"
+            "- Introduire des buzzwords ou patterns AI (cf. system)\n"
+            "</forbidden>\n\n"
+            "<rewrite_examples>\n"
+            "<example>\n"
+            "  before: \"Il est nécessaire d'évaluer méticuleusement les risques avant le déploiement.\"\n"
+            "  after: \"Évalue les risques avant de déployer. C'est pas négociable.\"\n"
+            "</example>\n"
+            "<example>\n"
+            "  before: \"Les organisations doivent prendre en considération la conformité RGPD.\"\n"
+            "  after: \"La conformité RGPD, tu la gères en amont. Pas après.\"\n"
+            "</example>\n"
+            "</rewrite_examples>\n\n"
+            "<outline_to_rewrite>\n" + outline_str + "\n</outline_to_rewrite>"
         ),
         tool=SLIDES_TOOL,
         max_tokens=TOKEN_BUDGETS["pen"],
@@ -307,7 +449,7 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
         )
         out = call_tool(
             model=SONNET_MODEL,
-            system=system_voice(),
+            system=_system_with_learnings(),
             user_text=(
                 "Le draft ci-dessous contient encore des patterns interdits.\n"
                 f"PATTERNS DÉTECTÉS À ÉLIMINER : {violations_str}\n\n"
@@ -326,30 +468,54 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
     slides_summary = " | ".join(s["main"] for s in slides[:4])
     out = call_tool(
         model=SONNET_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            f"Angle : {angle['angle']}\n"
+            "<context>\n"
+            f"Angle retenu : {angle['angle']}\n"
             f"Hook visuel slide 1 : {angle['hook']}\n"
-            f"Aperçu slides : {slides_summary}\n\n"
-            "Écris 3 hooks pour le TEXTE du post LinkedIn (≈200 chars affichés avant See more).\n"
-            "Ces hooks doivent être DIFFÉRENTS du hook visuel slide 1.\n\n"
-            "1 hook par formule (toutes orientées prospect, sans anecdote perso inventée) :\n\n"
-            "- contrarian       : challenge une idée reçue du marché ou de l'article.\n"
-            "                     Ex : 'Tout le monde pense que X. L'annonce d'hier dit l'inverse.'\n\n"
-            "- data             : cite UN chiffre PRÉSENT dans l'article + son implication.\n"
-            "                     SI l'article n'a pas de chiffre exploitable, n'utilise PAS cette formule "
-            "                     (laisse vide ou propose une variante du contrarian).\n"
-            "                     N'invente pas de chiffre précis (pas de '73%' ou 'McKinsey' sortis de nulle part).\n\n"
-            "- prospect_question : pose une question qui résonne avec une douleur du prospect.\n"
-            "                     Ex : 'Tu hésites encore avec X pour ton projet IA ? L'annonce d'hier "
-            "                     pourrait te faire reconsidérer.'\n\n"
-            "Contraintes par hook :\n"
-            "- 150-200 caractères\n"
-            "- 1 à 2 phrases courtes\n"
-            "- Pas de buzzword (cf. interdits dans system)\n"
-            "- Parle au LECTEUR (tu/vous), pas de 'Mardi dernier j'ai...' fictif\n"
-            "- Sonne oral, pas titre marketing"
+            f"Aperçu slides 1-4 : {slides_summary}\n"
+            "</context>\n\n"
+            "<task>\n"
+            "Écris 3 hooks pour le TEXTE du post LinkedIn (visible AVANT le 'See more').\n"
+            "Ces hooks doivent être DIFFÉRENTS du hook visuel de la slide 1 (qui est plus court).\n"
+            "1 hook par formule (contrarian, data, prospect_question).\n"
+            "</task>\n\n"
+            "<constraints_per_hook>\n"
+            "- Longueur cible : 100-140 chars (cutoff mobile, 80%+ du trafic 2026)\n"
+            "- Hard limit : 210 chars (cutoff desktop)\n"
+            "- 1 à 2 phrases courtes max\n"
+            "- Tu parles au LECTEUR (tu/vous), JAMAIS 'Mardi dernier j'ai...' (anecdote fictive interdite)\n"
+            "- Ton oral, pas titre marketing\n"
+            "- Pas de template anglais reconnaissable type 'Here's what nobody tells you' "
+            "(360Brew détecte sémantiquement les hooks copy-paste)\n"
+            "- SYNTAXE FRANÇAISE NATIVE : adverbe APRÈS le verbe ('configure mal', PAS 'mal configure').\n"
+            "  Relis chaque hook à voix haute — s'il sonne traduit d'anglais, réécris.\n"
+            "</constraints_per_hook>\n\n"
+            "<formulas>\n\n"
+            "<formula name=\"contrarian\">\n"
+            "Challenge une idée reçue du marché ou contredit ce que l'article suggère.\n"
+            "<good_example>\"Tout le monde court chercher 'le meilleur LLM'. Le vrai problème est ailleurs.\"</good_example>\n"
+            "<good_example>\"Un label 'leader Gartner' ne paye pas ta facture d'API. Ce qui change la donne :\"</good_example>\n"
+            "<bad_example>\"Voici la dure réalité de l'IA en entreprise.\" (cliché vide, autoritaire)</bad_example>\n"
+            "<bad_example>\"L'IA va TOUT changer.\" (banale, pas de contrarian réel)</bad_example>\n"
+            "</formula>\n\n"
+            "<formula name=\"data\">\n"
+            "Cite UN chiffre PRÉSENT dans l'article + son implication business.\n"
+            "Si l'article n'a aucun chiffre exploitable, n'utilise PAS cette formule. Mieux vaut un\n"
+            "doublon contrarian que d'inventer un '73%' ou un 'McKinsey'.\n"
+            "<good_example>\"Gartner classe OpenAI Leader 2026 en agents coding. Ça ne te dit rien sur ton prix final.\"</good_example>\n"
+            "<good_example>\"30% de gain de productivité chez Virgin Atlantic avec Codex. Reproductible chez toi ?\"</good_example>\n"
+            "<bad_example>\"73% des PME passent à l'IA en 2026.\" (chiffre fabriqué, source pas dans l'article)</bad_example>\n"
+            "</formula>\n\n"
+            "<formula name=\"prospect_question\">\n"
+            "Pose une question qui résonne avec UNE douleur précise de la cible.\n"
+            "<good_example>\"Tu paies déjà ton abonnement Copilot. Tu sais ce que tu y gagnes vraiment ?\"</good_example>\n"
+            "<good_example>\"Tu veux brancher l'IA dans tes process. Qui pilote ça en interne ?\"</good_example>\n"
+            "<bad_example>\"Vous voulez gagner du temps avec l'IA ?\" (question vide, banale)</bad_example>\n"
+            "<bad_example>\"L'IA pour ta PME, ça t'intéresse ?\" (yes/no fermé, aucune accroche)</bad_example>\n"
+            "</formula>\n\n"
+            "</formulas>"
         ),
         tool=HOOK_VARIANTS_TOOL,
         max_tokens=TOKEN_BUDGETS["hook_generator"],
@@ -362,21 +528,41 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> di
     variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
     out = call_tool(
         model=HAIKU_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            f"Angle du post : {angle['angle']}\n\n"
-            "3 variations de hook :\n" + variants_str + "\n\n"
-            "Choisis LA meilleure pour l'audience définie en system.\n"
-            "Critères de sélection :\n"
-            "1. STOPPE le scroll (curiosité, promesse implicite forte)\n"
-            "2. Pas d'invention factuelle : si un hook cite un chiffre précis, ce chiffre doit venir "
-            "   de l'article source. Si tu détectes un chiffre fabriqué, RECALE ce hook.\n"
-            "3. PARLE au lecteur (pas anecdote perso fictive type 'Mardi dernier j'ai...'). "
-            "   Si un hook raconte la vie de Victor de façon non sourcée, RECALE-le.\n"
-            "4. TIENT sa promesse vis-à-vis du contenu du post (l'algo 2026 pénalise les hooks clickbait)\n"
-            "5. MATCH l'audience décideur PME (pas trop technique)\n\n"
-            "Renvoie la formule winner + 1-2 phrases de justification."
+            f"<post_angle>{angle['angle']}</post_angle>\n\n"
+            "<variants>\n" + variants_str + "\n</variants>\n\n"
+            "<task>\n"
+            "Choisis LE meilleur des 3 hooks pour la cible PME/CTO non-tech.\n"
+            "Renvoie : winner_formula + 1-2 phrases de justification (max 300 chars).\n"
+            "</task>\n\n"
+            "<criteria ordered_by_priority>\n"
+            "1. SCROLL-STOP : promesse implicite forte, curiosité, douleur ciblée\n"
+            "2. ZÉRO INVENTION FACTUELLE : chiffre précis = doit venir de l'article. Si fabriqué → RECALE\n"
+            "3. PARLE AU LECTEUR : pas d'anecdote perso fictive (\"Mardi dernier j'ai…\") → RECALE\n"
+            "4. TIENT SA PROMESSE : pas de clickbait — le post doit livrer ce que le hook teaste (algo 2026 pénalise)\n"
+            "5. MATCH AUDIENCE NON-TECH : si jargon technique pas traduit → score plus bas\n"
+            "6. SYNTAXE FR NATIVE : un calque type \"mal configure\", \"bien utilise\" → RECALE\n"
+            "</criteria>\n\n"
+            "<judgement_examples>\n"
+            "<example>\n"
+            "  variants:\n"
+            "    [contrarian] \"L'IA va TOUT changer en 2026.\" (banal)\n"
+            "    [data] \"73% des PME utilisent l'IA.\" (chiffre fabriqué)\n"
+            "    [prospect_question] \"Tu paies déjà ton outil IA. Tu sais combien il te coûte vraiment ?\"\n"
+            "  winner: prospect_question\n"
+            "  reason: \"Seul à toucher une douleur PME précise (coût caché). Les 2 autres : 1 banal, 1 chiffre fabriqué.\"\n"
+            "</example>\n"
+            "<example>\n"
+            "  variants:\n"
+            "    [contrarian] \"Tu cherches le meilleur LLM. Le vrai problème est ailleurs.\"\n"
+            "    [data] \"Anthropic vient de sortir Claude 5. 60% plus rapide selon eux.\"\n"
+            "    [prospect_question] \"Tu hésites entre Claude et GPT ?\"\n"
+            "  winner: contrarian\n"
+            "  reason: \"Contrarian le plus actionnable. Le data est anecdotique (perf, pas business). Le question est trop tech.\"\n"
+            "</example>\n"
+            "</judgement_examples>"
         ),
         tool=HOOK_JUDGE_TOOL,
         max_tokens=TOKEN_BUDGETS["hook_judge"],
@@ -385,39 +571,56 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> di
 
 
 def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
-    """1er commentaire = CTA direct sous le post (Haiku)."""
+    """1er commentaire = CTA direct sous le post (Haiku).
+
+    IMPORTANT 2026 : aucun lien externe dans le commentaire. LinkedIn pénalise
+    jusqu'à -80% la visibilité des commentaires contenant un lien (Voketa Q1 2026,
+    ConnectSafely 2026). Le canal d'action = "DM ouvert" uniquement.
+    """
     out = call_tool(
         model=HAIKU_MODEL,
-        system=system_voice(),
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            f"Angle du post : {angle['angle']}\n\n"
+            f"<post_angle>{angle['angle']}</post_angle>\n\n"
+            "<task>\n"
             "Écris le 1er commentaire que Victor poste sous son propre post.\n"
-            "C'est un commentaire en 2 temps : (a) citation source + (b) CTA direct.\n\n"
-            "Objectif : transparence (on cite toujours nos sources) + pousser le prospect à AGIR.\n\n"
-            "Best practice LinkedIn 2026 : un CTA convertit quand le LIVRABLE est tangible et précis. "
-            "Évite 'on regarde ensemble', 'on en parle'.\n\n"
-            "Format attendu (300-500 chars) :\n\n"
-            "PARTIE 1 — Source (TOUJOURS en premier) :\n"
-            "  - Format : 'Source : {URL exacte de l'article source ci-dessus}'\n"
-            "  - L'URL est dans le bloc <article_source> ci-dessus, à recopier verbatim.\n"
-            "  - Pas de paraphrase, pas d'invention d'URL.\n\n"
-            "PARTIE 2 — CTA (après la source) :\n"
-            "  1. UNE phrase de transition vers l'action (ancrée sur le sujet du post).\n"
-            "  2. LE CTA explicite : ce que tu PROPOSES (audit gratuit, sparring 30min, etc).\n"
-            "  3. LE LIVRABLE TANGIBLE : ce que le prospect REPART AVEC.\n"
-            "     - Indispensable : un livrable nommé (pas 'on discute').\n"
-            "     - Exemples : 'une feuille de route claire', 'une short-list de 3 cas',\n"
-            "       'une grille de risques', 'un plan d'action prioritisé'.\n"
-            f"  4. LE LIEN d'action : {PROFILE_URL} OU 'DM ouvert'.\n\n"
-            "Structure type :\n"
-            "  Source : https://exemple.com/article-original\n"
-            "  \n"
-            "  [phrase de transition courte vers l'action]\n"
-            "  [CTA avec livrable] — DM ouvert ou victorlenain.fr\n\n"
-            "Ton : direct, voix Victor (oral, courte), pas vendeur agressif.\n"
-            "À éviter : anecdote perso fictive, chiffre inventé, URL fabriquée, "
-            "verbe vague type 'discuter' / 'regarder' sans livrable explicite."
+            "C'est un CTA DIRECT vers une action — pas une question d'engagement.\n"
+            "Objectif : faire passer le prospect de la lecture à l'action (DM).\n"
+            "</task>\n\n"
+            "<format length=\"200-400 chars\">\n"
+            "1. UNE phrase de transition courte ancrée sur le sujet du post (1 ligne)\n"
+            "2. LE CTA explicite : audit gratuit / appel découverte / sparring 30min / autre\n"
+            "3. LE LIVRABLE TANGIBLE : ce que le prospect repart AVEC, concrètement\n"
+            "4. CANAL : \"DM ouvert\" (aucun lien externe)\n"
+            "</format>\n\n"
+            "<rule name=\"livrable-obligatoire\">\n"
+            "Un livrable doit être NOMMÉ et CONCRET. Si tu ne peux pas le nommer, reformule le CTA.\n"
+            "<good_livrable>\"une feuille de route chiffrée\"</good_livrable>\n"
+            "<good_livrable>\"une short-list de 3 cas d'usage prioritaires\"</good_livrable>\n"
+            "<good_livrable>\"une grille de risques sur ta stack actuelle\"</good_livrable>\n"
+            "<good_livrable>\"un plan d'action 30/60/90 jours\"</good_livrable>\n"
+            "<bad_livrable>\"on discute\"</bad_livrable>\n"
+            "<bad_livrable>\"on regarde ensemble\"</bad_livrable>\n"
+            "<bad_livrable>\"on échange sur ton cas\"</bad_livrable>\n"
+            "</rule>\n\n"
+            "<rule name=\"no-link\" priority=\"critical\">\n"
+            "AUCUN lien dans le commentaire. AUCUNE URL. AUCUNE mention de site web (victorlenain.fr inclus).\n"
+            "LinkedIn pénalise -80% la visibilité des commentaires contenant un lien externe en 2026.\n"
+            "Seul canal autorisé : \"DM ouvert\".\n"
+            "</rule>\n\n"
+            "<bad_examples>\n"
+            "<bad>\"N'hésite pas à me contacter pour en discuter !\" (vague, pas de livrable)</bad>\n"
+            "<bad>\"Plus d'infos sur victorlenain.fr 👉\" (lien externe → -80% visibilité)</bad>\n"
+            "<bad>\"DM moi pour qu'on en parle\" (verbe vague, pas de livrable nommé)</bad>\n"
+            "</bad_examples>\n\n"
+            "<good_examples>\n"
+            "<good>\"L'IA pour PME ça commence par savoir quoi automatiser. Si tu veux clarifier ça pour ton entreprise : 30min en DM. Tu repars avec une short-list de 3 cas prioritaires et un coût ordre de grandeur. DM ouvert.\"</good>\n"
+            "<good>\"Le 'leader Gartner' ne te dit pas combien tu vas payer. Mon audit 30min gratuit te donne une grille de coût réel sur ta stack + un plan de migration sans lock-in. DM ouvert.\"</good>\n"
+            "</good_examples>\n\n"
+            "<voice>\n"
+            "Direct, oral, voix Victor. Pas vendeur agressif. Pas de \"Hello !\". Pas de 🚀.\n"
+            "</voice>"
         ),
         tool=CTA_COMMENT_TOOL,
         max_tokens=TOKEN_BUDGETS["comment_writer"],
@@ -544,11 +747,7 @@ def _news_to_topic(news: dict) -> str:
 
 
 def _article_context(news: dict) -> str:
-    """Construit le bloc <article_source> grounding fourni à tous les agents.
-
-    Balisage XML pour aider Claude 4.x à reconnaître la source factuelle
-    (best practice Anthropic 2026 : XML tags > Markdown pour structuration).
-    """
+    """Construit le bloc 'ARTICLE SOURCE' grounding fourni à tous les agents."""
     title = (news.get("title") or "").strip()
     url = (news.get("url") or "").strip()
     source = (news.get("source") or "").strip()
@@ -559,13 +758,12 @@ def _article_context(news: dict) -> str:
         body if body else "(pas de contenu détaillé — base-toi uniquement sur le titre, n'invente rien)"
     )
     return (
-        "<article_source>\n"
-        "Seule base factuelle autorisée pour ce post.\n\n"
+        "═══ ARTICLE SOURCE (seule base factuelle autorisée) ═══\n"
         f"Source : {source}\n"
         f"Titre  : {title}\n"
         f"URL    : {url}\n"
         f"Contenu :\n{body_text}\n"
-        "</article_source>"
+        "═══════════════════════════════════════════════════"
     )
 
 

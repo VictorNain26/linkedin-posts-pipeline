@@ -91,6 +91,17 @@ fi
 log "=== Pipeline start (dry_run=$DRY_RUN) ==="
 metric event "start" dry_run "$DRY_RUN"
 
+# ── Kill-switch UI : si .publi_paused existe ET qu'on n'est pas en dry-run, skip ──
+# Touch ce fichier (depuis le dashboard ou à la main) pour mettre en pause les publications
+# auto sans toucher au crontab. Les dry-runs (tests) restent autorisés pour qualif contenu.
+PAUSE_FLAG="$DATA_DIR/.publi_paused"
+if [ "$DRY_RUN" = "false" ] && [ -f "$PAUSE_FLAG" ]; then
+    PAUSE_REASON=$(head -c 200 "$PAUSE_FLAG" 2>/dev/null || echo "")
+    log "PAUSED — kill-switch actif ($PAUSE_FLAG). Reason: ${PAUSE_REASON:-(no reason file)}. Skip."
+    metric event "paused" reason "${PAUSE_REASON:-no_reason}"
+    exit 0
+fi
+
 # ── Guard : pas plus d'1 post / jour (via history.py) ───────
 if ! ALREADY=$(python3 -c "from history import posted_today; print('1' if posted_today() else '0')" 2>>"$LOG_FILE"); then
     log "ERROR: history check failed"
@@ -177,6 +188,30 @@ if [ "$DRY_RUN" = "true" ]; then
     log "  preview: $(head -c 120 "$POST_DIR/post.txt")…"
     log "  format : $FORMAT_CHOICE"
     log "  comment: $(head -c 120 "$POST_DIR/first_comment.txt")…"
+
+    # Trace le test en DB (status='test') pour qu'il apparaisse dans l'UI Dashboard.
+    python3 - "$POST_DIR/result.json" <<'PY' 2>>"$LOG_FILE"
+import json, os, sys
+sys.path.insert(0, os.environ.get("PIPELINE_DIR", "."))
+from history import record_post, record_hook_variants
+data = json.load(open(sys.argv[1]))
+post_pk = record_post(
+    topic=data["topic"],
+    slug=data["slug"],
+    format=data["format"],
+    keywords=data["keywords"],
+    linkedin_post_id=None,
+    linkedin_comment_id=None,
+    status="test",
+)
+record_hook_variants(
+    post_id=post_pk,
+    variants=data["hook_variants"],
+    winner_formula=data["hook_winner_formula"],
+    judge_reason=data["hook_winner_reason"],
+)
+print(post_pk, file=sys.stderr)
+PY
     metric event "dry_run_done"
 else
     log "[4/5] Posting to LinkedIn ($FORMAT_CHOICE)…"
@@ -184,8 +219,8 @@ else
     POST_ID=$(python3 - <<'PY' 2>>"$LOG_FILE"
 import json, os, sys, pathlib
 sys.path.insert(0, os.environ.get("PIPELINE_DIR", "."))
-from config import FORMAT_CAROUSEL, FORMAT_POLL, FORMAT_TEXT
-from linkedin_post import post_document_carousel, post_text_only, post_poll
+from config import FORMAT_CAROUSEL, FORMAT_TEXT
+from linkedin_post import post_document_carousel, post_text_only
 
 post_dir = pathlib.Path(os.environ["POST_DIR_ENV"])
 data = json.load(open(post_dir / "result.json"))
@@ -196,15 +231,10 @@ if fmt == FORMAT_CAROUSEL:
     pid = post_document_carousel(text, str(post_dir / "carousel.pdf"))
 elif fmt == FORMAT_TEXT:
     pid = post_text_only(text)
-elif fmt == FORMAT_POLL:
-    # Pour les polls, on dérive la question depuis le hook et propose des options simples.
-    # Note : format poll est rare (1x/2sem au max), géré par format_selector.
-    hook = data["feed_hook"]
-    question = hook[:140]
-    options = ["Plutôt d'accord", "Plutôt pas d'accord", "Ça dépend", "Pas d'avis"]
-    pid = post_poll(text, question, options)
 else:
-    raise SystemExit(f"unknown format: {fmt}")
+    # poll = retiré du roulement auto en 2026 (reach trap). post_poll() reste dispo
+    # dans linkedin_post.py pour usage manuel mais n'est plus émis par format_selector.
+    raise SystemExit(f"unsupported format from pipeline: {fmt!r} (carousel/text only)")
 print(pid)
 PY
 )

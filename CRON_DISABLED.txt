@@ -1,16 +1,20 @@
 # LinkedIn pipeline crons — pour install HOST NATIVE (sans Docker).
 # Pour Docker, voir docker/crontab.docker (chargé automatiquement par supercronic).
 #
-# DÉSACTIVÉS en attente approbation Community Management API.
+# DÉSACTIVÉS — à activer après run de oauth_setup.py.
 #
-# Activation (après réception de l'email d'approbation) :
+# Le pipeline tourne avec le produit "Share on LinkedIn" (scope w_member_social
+# self-serve, sans approbation). L'analytics via memberCreatorPostAnalytics
+# requiert Community Management API et n'est PAS disponible — utiliser
+# import_analytics_csv.py pour importer manuellement l'export CSV LinkedIn UI.
+#
+# Activation :
 #   1. Run oauth_setup.py via SSH tunnel pour générer les tokens (cf. README.md §Setup)
-#      → ce setup intègre le scope r_member_postAnalytics nécessaire aux analytics.
-#   2. crontab -e  → décommenter les 4 lignes ci-dessous (sans le # initial)
+#   2. crontab -e  → décommenter les lignes ci-dessous (sans le # initial)
 #
 # Vérification après activation :
 #   crontab -l                                       # voir les crons actifs
-#   PIPELINE_MODE=veille ./pipeline.sh --dry-run     # tester sans publier
+#   ./pipeline.sh --dry-run                          # tester sans publier
 #   tail -f ~/linkedin-posts-data/logs/cron.log      # observer un run réel
 #
 # ────────────────────────────────────────────────────────────────────────
@@ -20,12 +24,16 @@
 # HOME=/home/victormoi
 #
 # ── Posts evergreen prospect ────────────────────────────────────────
-# Mardi + jeudi 10h30 — angle business systématique, cible décideur PME/CTO
-# 30 10 * * 2,4 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+# Mardi + mercredi + jeudi 10h30 — cadence 3/sem (sweet spot LinkedIn 2026, source
+# Buffer 2M+ posts, Sprout Social, van der Blom). Au-delà de 5/sem, engagement
+# par post chute 18-32%. Cible décideur PME/CTO.
+# 30 10 * * 2,3,4 cd /home/victormoi/linkedin-posts && ./pipeline.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
 #
-# ── Analytics daily ─────────────────────────────────────────────────
-# Tous les jours 21h00 — fetch métriques des 30 derniers jours de posts
-# 0 21 * * * cd /home/victormoi/linkedin-posts && ./fetch_analytics.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
+# ── Analytics CSV import (manuel hebdo) ─────────────────────────────
+# Pas de cron automatique : tu exportes le CSV depuis l'UI LinkedIn
+# (Analytics → Show all analytics → Export) puis :
+#   python3 import_analytics_csv.py /chemin/vers/export.csv
+# Cadence reco : 1x/sem le lundi avant le weekly_report.
 #
 # ── Healthcheck ─────────────────────────────────────────────────────
 # Tous les jours 08h00 (refresh token tous les 50j, vérif RSS, disk, activity)
@@ -33,6 +41,7 @@
 #
 # ── Rapport hebdomadaire ────────────────────────────────────────────
 # Lundi 07h00 — synthèse semaine N-1 + envoi par email
+# (s'appuie sur les analytics importés via import_analytics_csv.py)
 # 0 7 * * 1 cd /home/victormoi/linkedin-posts && ./weekly_report.sh >> /home/victormoi/linkedin-posts-data/logs/cron.log 2>&1
 #
 # ── Backup auto ─────────────────────────────────────────────────────
@@ -54,6 +63,7 @@
 #                              voir https://support.google.com/accounts/answer/185833
 #
 # Notes :
-# - 100% evergreen orienté prospect PME/CTO (pas de mode veille tech).
-# - Format auto-décidé par format_selector.py (carousel default, text/poll si streak ≥ 3).
+# - 100% evergreen orienté prospect PME/CTO.
+# - Format auto-décidé par format_selector.py (carousel default, text-only après
+#   3 carrousels consécutifs). Polls retirés du roulement (reach trap 2026).
 # - Aucun fallback silencieux : si RSS vide ou pipeline fail → exit non-0.

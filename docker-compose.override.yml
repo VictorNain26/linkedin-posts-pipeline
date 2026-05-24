@@ -16,7 +16,7 @@ services:
     # Mount code source en bind mount → hot-reload pour itérer
     volumes:
       - ./:/app:ro
-      - ./data:/data
+      - ${LINKEDIN_DATA_DIR:-../linkedin-posts-data}:/data
       - ./docker/crontab.docker:/app/crontab:ro
 
     environment:

@@ -161,7 +161,12 @@ def enrich_with_article_content(items: list[dict], max_articles: int = 5) -> lis
 
 
 def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
-    """Score 0-10 avec scoring strict orienté intégration IA (pas ML infra)."""
+    """Score 0-10. Barème aligné cible PME/CTO non-tech (cf. AUDIENCE_DESC dans config.py).
+
+    Priorise les sujets qui ont un angle business activable pour Victor :
+    impacts business des annonces IA, conformité (CNIL, AI Act), ROI/cas d'usage
+    entreprise, adoption IA en PME. Écarte le tech-pour-tech sans angle business.
+    """
     if not items:
         return []
     articles_str = json.dumps(
@@ -178,29 +183,97 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
     )
     out = call_tool(
         model=HAIKU_MODEL,
-        system=None,
+        system=[
+            {
+                "type": "text",
+                "text": (
+                    "<role>\n"
+                    "Tu scores la pertinence d'articles pour le compte LinkedIn de Victor Lenain, "
+                    "dev freelance + intégrateur IA Paris.\n"
+                    "</role>\n\n"
+                    "<audience>\n"
+                    "Dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA. "
+                    "MAJORITÉ NON TECHNIQUE. Vocabulaire BUSINESS. Sensibles : ROI, time-to-value, "
+                    "risques (coût, lock-in, hallucinations, dépendance fournisseur, "
+                    "conformité RGPD/AI Act, équipe pas formée).\n"
+                    "</audience>\n\n"
+                    "<task>\n"
+                    "Score chaque article selon sa capacité à devenir un post LinkedIn business "
+                    "ACTIONNABLE pour cette audience. Sois STRICT — préfère 5 articles bien scorés "
+                    "à 20 mal scorés.\n"
+                    "</task>"
+                ),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         user_text=(
-            "Tu scores la pertinence d'articles IA pour des posts LinkedIn de Victor Lenain, "
-            "dev freelance Paris qui fait de l'INTÉGRATION IA dans des apps web "
-            "(Claude/OpenAI/Mistral APIs, RAG, agents, MCP) pour PME et startups françaises.\n\n"
-            "BARÈME STRICT :\n\n"
-            "TRÈS PERTINENT (8-10) :\n"
-            "- Lancement modèle/API grand public utilisable par un dev (Claude, GPT, Mistral, Gemini)\n"
-            "- Nouveau SDK / framework / pattern pour intégrer l'IA (Anthropic SDK, MCP, LangChain, LlamaIndex)\n"
-            "- Cas usage business IA concret pour PME (automatisation, RAG sur docs, agent métier)\n"
-            "- Bonnes pratiques d'intégration IA (prompt caching, tool use, structured outputs)\n\n"
-            "PERTINENT (5-7) :\n"
-            "- Outils IA pour devs (Copilot, Cursor, Claude Code)\n"
-            "- Comparaisons franches de modèles ou SDKs\n"
-            "- Patterns d'agents et orchestration\n\n"
-            "PAS PERTINENT (0-4) :\n"
-            "- ML infrastructure lourde (training, GPU clusters, SageMaker, Trainium, fine-tuning custom)\n"
-            "- Recherche académique pure (papers, benchmarks théoriques)\n"
+            "<scoring_rubric>\n\n"
+            "<tier score=\"8-10\" label=\"TRÈS PERTINENT\">\n"
+            "- Conformité / régulation IA (CNIL, EU AI Act, RGPD + IA, certifications)\n"
+            "- ROI / cas d'usage IA concret en entreprise AVEC chiffres ou bénéfices nommés\n"
+            "- Annonces produit IA majeures (OpenAI, Anthropic, Mistral) MAIS uniquement si l'article expose des IMPLICATIONS business directes pour une PME (pas juste tech-product)\n"
+            "- Adoption IA en PME française ou européenne, retours terrain\n"
+            "- Risques IA pour les entreprises (sécu, lock-in, biais, dépendance fournisseur)\n"
+            "</tier>\n\n"
+            "<tier score=\"5-7\" label=\"PERTINENT\">\n"
+            "- Annonces produit IA généralistes (besoin de pivot business par Victor pour activer)\n"
+            "- Stratégie IA en entreprise (organisation, recrutement, gouvernance)\n"
+            "- Comparaisons d'outils IA grand public\n"
+            "- Études / rapports IA business (McKinsey, BCG, Gartner) si chiffres exploitables\n"
+            "</tier>\n\n"
+            "<tier score=\"0-4\" label=\"PAS PERTINENT\">\n"
+            "- Tech infrastructure pure (training, GPU clusters, fine-tuning) sans angle business\n"
+            "- Recherche académique, benchmarks théoriques, papers sans application directe\n"
             "- Hardware (puces, datacenters)\n"
-            "- Levées de fonds, business des boites IA\n"
-            "- Robotique, autonomous vehicles, vision biomedicale\n"
-            "- Annonces produit grand public non développeur (consumer apps)\n\n"
-            "Articles à scorer (ordre conservé) :\n" + articles_str + "\n\n"
+            "- Levées de fonds isolées sans angle stratégique pour la cible\n"
+            "- Robotique, autonomous vehicles, vision biomédicale (hors scope)\n"
+            "- Apps grand public B2C (ChatGPT side-features) sans angle B2B\n"
+            "- Sujets non-IA (politique, économie générale) — sauf CNIL/régulation IA\n"
+            "</tier>\n\n"
+            "</scoring_rubric>\n\n"
+            "<critical_trap>\n"
+            "Un article OpenAI/Anthropic n'est PAS automatiquement à 8-10. Test rapide :\n"
+            "\"Un dirigeant PME français non-tech peut-il tirer une décision concrète après lecture ?\"\n"
+            "Si non → 5-7 max.\n"
+            "</critical_trap>\n\n"
+            "<calibration_examples>\n"
+            "<example score=\"9\">\n"
+            "  Titre: \"La CNIL publie ses recommandations sur l'IA générative pour les RH\"\n"
+            "  → Conformité IA + cible RH PME directement. Décision claire après lecture.\n"
+            "</example>\n"
+            "<example score=\"8\">\n"
+            "  Titre: \"L'EU AI Act entre en vigueur : ce que ça change pour les PME\"\n"
+            "  → Régulation impactant directement la cible. Très actionnable.\n"
+            "</example>\n"
+            "<example score=\"7\">\n"
+            "  Titre: \"How Virgin Atlantic ships faster with Codex\"\n"
+            "  → Cas business avec ROI nommé mais cible Virgin = grande entreprise tech.\n"
+            "  Pivot possible vers PME (\"que peuvent en tirer les PME ?\").\n"
+            "</example>\n"
+            "<example score=\"6\">\n"
+            "  Titre: \"OpenAI named a Leader by Gartner in coding agents\"\n"
+            "  → Annonce produit nécessitant un pivot fort. Pas immédiatement actionnable.\n"
+            "</example>\n"
+            "<example score=\"5\">\n"
+            "  Titre: \"Une startup française lève 50M pour son agent IA\"\n"
+            "  → Levée. Pivot possible (\"que faut-il regarder côté outils ?\") mais limité.\n"
+            "</example>\n"
+            "<example score=\"3\">\n"
+            "  Titre: \"OpenAI partners with Dell on hybrid Codex deployment\"\n"
+            "  → Partnership infra entre grandes boites. Pas pertinent PME.\n"
+            "</example>\n"
+            "<example score=\"2\">\n"
+            "  Titre: \"An OpenAI model has disproved a discrete geometry conjecture\"\n"
+            "  → Recherche académique pure. Aucune décision PME possible.\n"
+            "</example>\n"
+            "<example score=\"1\">\n"
+            "  Titre: \"Macron annonce une rallonge budgétaire pour la défense\"\n"
+            "  → Hors scope IA business.\n"
+            "</example>\n"
+            "</calibration_examples>\n\n"
+            "<articles_to_score>\n"
+            + articles_str + "\n"
+            "</articles_to_score>\n\n"
             "Réponds 1 score par article, même ordre."
         ),
         tool=SCORE_TOOL,

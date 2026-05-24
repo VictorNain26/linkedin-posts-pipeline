@@ -15,6 +15,7 @@
 set -euo pipefail
 IFS=$'\n\t'
 
+DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${LINKEDIN_DATA_DIR:-$HOME/linkedin-posts-data}"
 OUTPUT_DIR="$DATA_DIR/output"
 LOG_DIR="$DATA_DIR/logs"

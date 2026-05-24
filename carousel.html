@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<style>
+  /* ────────────────────────────────────────────────────────────────
+     LinkedIn carousel — design uniforme dark avec accent radial bleu.
+     Format portrait 1080x1350 (best practice 2026).
+  ──────────────────────────────────────────────────────────────── */
+
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Helvetica Neue', Arial, sans-serif;
+    color: #f0f0f5;
+    background: #0a0a0f;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ── Base slide : layout commun à toutes les slides ───────── */
+  .slide {
+    width: 1080px;
+    height: 1350px;
+    padding: 100px 90px 90px;
+    page-break-after: always;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    background:
+      radial-gradient(ellipse 800px 600px at 20% 0%, rgba(59, 130, 246, 0.16), transparent 70%),
+      radial-gradient(ellipse 600px 800px at 100% 100%, rgba(59, 130, 246, 0.07), transparent 60%),
+      #0a0a0f;
+  }
+  .slide:last-child { page-break-after: auto; }
+
+  /* ── Header (logo + brand) ────────────────────────────────── */
+  .header {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .header img {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+  }
+  .header-text { display: flex; flex-direction: column; }
+  .header .brand {
+    font-size: 20px;
+    font-weight: 700;
+    color: #f0f0f5;
+    letter-spacing: -0.01em;
+  }
+  .header .brand-sub {
+    font-size: 13px;
+    color: #6b7280;
+    font-weight: 500;
+    margin-top: 2px;
+  }
+
+  /* ── Numéro de slide (top-right) ───────────────────────────── */
+  .slide-number {
+    position: absolute;
+    top: 100px;
+    right: 90px;
+    font-size: 16px;
+    color: #4b5563;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+  }
+
+  /* ── Corps de la slide ─────────────────────────────────────── */
+  .body {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 60px 0;
+  }
+  .accent-bar {
+    width: 72px;
+    height: 5px;
+    background: #3b82f6;
+    border-radius: 3px;
+    margin-bottom: 44px;
+  }
+  .main-text {
+    font-size: 56px;
+    font-weight: 700;
+    line-height: 1.18;
+    letter-spacing: -0.02em;
+    color: #f0f0f5;
+  }
+  .sub-text {
+    font-size: 28px;
+    line-height: 1.5;
+    color: #9ca3af;
+    margin-top: 32px;
+    font-weight: 400;
+  }
+
+  /* ──────────────────────────────────────────────
+     Cover slide : disposition distincte
+     - Pas de header dupliqué (le titre porte la slide)
+     - Titre énorme aligné en haut, prend tout l'espace
+     - Sub-text en gros sous le titre
+     - Signature en bas (logo + nom + role) compacte
+     - Flèche bas-droite uniquement
+     - Pas de slide-number (redondant sur slide 1)
+  ────────────────────────────────────────────── */
+  .slide-cover {
+    padding: 110px 90px 90px;
+    justify-content: space-between;
+  }
+  .cover-headline {
+    display: flex;
+    flex-direction: column;
+  }
+  .cover-headline .accent-bar {
+    width: 120px;
+    height: 6px;
+    margin-bottom: 48px;
+  }
+  .cover-headline .main-text {
+    font-size: 92px;
+    font-weight: 800;
+    line-height: 1.04;
+    letter-spacing: -0.035em;
+    color: #f0f0f5;
+  }
+  .cover-headline .sub-text {
+    font-size: 32px;
+    line-height: 1.4;
+    color: #9ca3af;
+    margin-top: 44px;
+    font-weight: 400;
+    max-width: 760px;
+  }
+  .cover-bottom {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: 32px;
+    border-top: 1px solid rgba(255, 255, 255, 0.10);
+  }
+  .cover-signature {
+    display: flex;
+    align-items: center;
+    gap: 18px;
+  }
+  .cover-signature img {
+    width: 60px;
+    height: 60px;
+    border-radius: 13px;
+  }
+  .cover-signature .sig-text {
+    display: flex;
+    flex-direction: column;
+  }
+  .cover-signature .sig-name {
+    font-size: 21px;
+    font-weight: 700;
+    color: #f0f0f5;
+    letter-spacing: -0.01em;
+  }
+  .cover-signature .sig-role {
+    font-size: 14px;
+    color: #6b7280;
+    font-weight: 500;
+    margin-top: 3px;
+  }
+  .cover-arrow {
+    font-size: 40px;
+    color: #3b82f6;
+    line-height: 1;
+  }
+
+  /* ── CTA slide finale ──────────────────────────────────────── */
+  .slide-cta .main-text {
+    font-size: 60px;
+    font-weight: 800;
+    color: #3b82f6;
+    letter-spacing: -0.025em;
+  }
+  .slide-cta .accent-bar {
+    width: 120px;
+    height: 6px;
+  }
+
+  /* Badge ASTUCE (save cue sur slide finale) */
+  .save-cue {
+    margin-top: 56px;
+    padding: 22px 28px;
+    background: rgba(59, 130, 246, 0.12);
+    border-left: 4px solid #3b82f6;
+    border-radius: 8px;
+    font-size: 22px;
+    color: #93c5fd;
+    font-weight: 500;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+  }
+  .save-cue-badge {
+    display: inline-block;
+    padding: 6px 12px;
+    background: #3b82f6;
+    color: #f0f0f5;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    border-radius: 4px;
+  }
+
+  /* ── Footer ────────────────────────────────────────────────── */
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-size: 16px;
+    color: #6b7280;
+    font-weight: 500;
+  }
+  .footer .next-arrow {
+    font-size: 32px;
+    color: #3b82f6;
+    line-height: 1;
+    font-weight: 400;
+  }
+</style>
+</head>
+<body>
+  {{SLIDES_HTML}}
+</body>
+</html>

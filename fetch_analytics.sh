@@ -1,8 +1,14 @@
 #!/usr/bin/env bash
-# fetch_analytics.sh — cron daily 21h
-# Récupère les métriques LinkedIn pour les posts publiés des 30 derniers jours.
+# fetch_analytics.sh — fetch analytics via API LinkedIn (si scope disponible).
+#
+# ⚠️ Avec le produit "Share on LinkedIn" seul (scope w_member_social),
+#    l'API analytics est inaccessible (exit 2 → scope_missing).
+#    Dans ce cas : utilise import_analytics_csv.py avec l'export UI hebdo.
+#
+# Si tu décroches Community Management API plus tard, ce script reprend
+# le relais automatiquement (le scope r_member_postAnalytics suffit).
 
-set -euo pipefail
+set -uo pipefail
 IFS=$'\n\t'
 
 DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -32,5 +38,23 @@ if ! flock -n 9; then
 fi
 
 log "=== Analytics fetch start ==="
+set +e
 python3 "$DIR/linkedin_analytics.py" 2>>"$LOG_FILE"
-log "=== Analytics fetch done ==="
+RC=$?
+set -e
+
+case "$RC" in
+    0)
+        log "=== Analytics fetch done ==="
+        ;;
+    2)
+        log "SKIP : scope r_member_postAnalytics absent (Community Management API)."
+        log "  → utilise : python3 $DIR/import_analytics_csv.py /chemin/vers/export.csv"
+        # Exit 0 pour ne pas spammer le healthcheck d'alertes : c'est un "pas dispo", pas un échec.
+        exit 0
+        ;;
+    *)
+        log "ERROR : linkedin_analytics.py exit $RC"
+        exit "$RC"
+        ;;
+esac

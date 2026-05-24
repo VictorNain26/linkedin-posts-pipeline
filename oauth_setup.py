@@ -25,18 +25,26 @@ load_dotenv()
 ENV_FILE = os.path.join(os.path.dirname(__file__), ".env")
 REDIRECT_URI = "http://localhost:8080/callback"
 
-# Scopes :
-# - openid profile email : identité (OpenID Connect, remplace r_basicprofile déprécié)
-# - w_member_social      : publier posts + commenter
-# - r_member_postAnalytics : lire les métriques de ses propres posts
-SCOPES = "openid profile email w_member_social r_member_postAnalytics"
+# Scopes par défaut : OpenID Connect moderne + Share on LinkedIn.
+# - Produit LinkedIn dev portal requis pour openid/profile/email :
+#     "Sign In with LinkedIn using OpenID Connect" (PAS la version legacy "Sign In with LinkedIn")
+# - Produit requis pour w_member_social : "Share on LinkedIn"
+#
+# Override possible via env var LI_SCOPES si :
+# - ton app a le produit LEGACY "Sign In with LinkedIn" : LI_SCOPES="r_liteprofile r_emailaddress w_member_social"
+# - tu n'as que "Share on LinkedIn" (pas de Sign In) : LI_SCOPES="w_member_social"
+#   (dans ce dernier cas, get_person_urn doit être fourni manuellement dans .env via LI_PERSON_URN)
+#
+# NOTE : r_member_postAnalytics (analytics API) requiert Community Management API (entité
+# légale + business email). Inaccessible en perso → analytics via import_analytics_csv.py.
+SCOPES = os.environ.get("LI_SCOPES", "openid profile email w_member_social").strip()
 
 _auth_code: str | None = None
 
 
 class _CallbackHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        global _auth_code  # noqa: PLW0603 — single-use OAuth handler
+    def do_GET(self):  # noqa: N802
+        global _auth_code
         params = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if "error" in params:
             self.send_response(400)
@@ -88,18 +96,39 @@ def exchange_code(code: str, client_id: str, client_secret: str) -> dict:
 
 
 def get_person_urn(access_token: str) -> str:
-    """Uses OpenID Connect userinfo endpoint (replaces deprecated /v2/me)."""
-    resp = requests.get(
-        "https://api.linkedin.com/v2/userinfo",
-        headers={"Authorization": f"Bearer {access_token}"},
-        timeout=REQUESTS_TIMEOUT,
+    """Récupère le person URN. Tente d'abord OpenID Connect (/v2/userinfo, retourne 'sub'),
+    fallback sur l'endpoint legacy (/v2/me, retourne 'id') si OpenID indisponible.
+
+    Échoue clairement si aucun endpoint ne marche → l'utilisateur doit fournir LI_PERSON_URN
+    manuellement dans .env (récupérable depuis l'URL de son profil LinkedIn).
+    """
+    headers = {"Authorization": f"Bearer {access_token}"}
+
+    # 1. OpenID Connect (scope: openid)
+    try:
+        resp = requests.get("https://api.linkedin.com/v2/userinfo", headers=headers, timeout=REQUESTS_TIMEOUT)
+        if resp.status_code == 200:
+            sub = resp.json().get("sub")
+            if sub:
+                return f"urn:li:person:{sub}"
+    except requests.RequestException:
+        pass
+
+    # 2. Legacy /v2/me (scope: r_liteprofile)
+    try:
+        resp = requests.get("https://api.linkedin.com/v2/me", headers=headers, timeout=REQUESTS_TIMEOUT)
+        if resp.status_code == 200:
+            pid = resp.json().get("id")
+            if pid:
+                return f"urn:li:person:{pid}"
+    except requests.RequestException:
+        pass
+
+    raise RuntimeError(
+        "Ni /v2/userinfo (OpenID) ni /v2/me (legacy) n'a fourni le person URN. "
+        "Ajoute LI_PERSON_URN manuellement dans .env "
+        "(format: urn:li:person:XXXXXX — visible dans l'URL admin du profil LinkedIn)."
     )
-    resp.raise_for_status()
-    data = resp.json()
-    sub = data.get("sub")
-    if not sub:
-        raise RuntimeError(f"userinfo missing 'sub': {data}")
-    return f"urn:li:person:{sub}"
 
 
 def main() -> int:
@@ -128,14 +157,11 @@ def main() -> int:
     set_key(ENV_FILE, "LI_PERSON_URN", person_urn)
 
     expires_in = tokens.get("expires_in", 0)
-    print("\n[oauth] saved tokens to .env", file=sys.stderr)
+    print(f"\n[oauth] saved tokens to .env", file=sys.stderr)
     print(f"[oauth] person URN  : {person_urn}", file=sys.stderr)
     print(f"[oauth] access TTL  : {expires_in}s (~{expires_in // 86400}d)", file=sys.stderr)
     if not refresh_token:
-        print(
-            "[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days",
-            file=sys.stderr,
-        )
+        print("[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days", file=sys.stderr)
     return 0
 
 

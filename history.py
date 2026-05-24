@@ -58,7 +58,93 @@ SCHEMA = [
         reason TEXT
     )""",
     "CREATE INDEX IF NOT EXISTS idx_format_history_date ON format_history(decided_at)",
+    # Croissance des followers — granularité journalière depuis l'export XLSX LinkedIn
+    """CREATE TABLE IF NOT EXISTS follower_growth (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date DATE NOT NULL,
+        new_followers INTEGER NOT NULL,
+        total_followers INTEGER,
+        imported_at DATETIME NOT NULL,
+        UNIQUE(date)
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_follower_growth_date ON follower_growth(date)",
+    # Snapshot démographique audience (job titles, lieux, secteurs)
+    """CREATE TABLE IF NOT EXISTS audience_snapshot (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        snapshot_at DATETIME NOT NULL,
+        dimension TEXT NOT NULL,
+        value TEXT NOT NULL,
+        percentage REAL NOT NULL
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_audience_snapshot ON audience_snapshot(snapshot_at, dimension)",
 ]
+
+
+def upsert_follower_growth(date: str, new_followers: int, total_followers: int | None = None) -> None:
+    """Insert ou update les followers d'une date donnée (idempotent sur re-import)."""
+    init_db()
+    with _conn() as conn:
+        conn.execute(
+            """INSERT INTO follower_growth (date, new_followers, total_followers, imported_at)
+               VALUES (?, ?, ?, ?)
+               ON CONFLICT(date) DO UPDATE SET
+                   new_followers = excluded.new_followers,
+                   total_followers = COALESCE(excluded.total_followers, follower_growth.total_followers),
+                   imported_at = excluded.imported_at""",
+            (date, new_followers, total_followers, datetime.now().isoformat()),
+        )
+
+
+def insert_audience_snapshot(snapshot_at: str, rows: list[tuple[str, str, float]]) -> None:
+    """rows = liste de (dimension, value, percentage). Wipe pour ce snapshot_at puis insert."""
+    init_db()
+    with _conn() as conn:
+        conn.execute("DELETE FROM audience_snapshot WHERE snapshot_at = ?", (snapshot_at,))
+        conn.executemany(
+            "INSERT INTO audience_snapshot (snapshot_at, dimension, value, percentage) VALUES (?, ?, ?, ?)",
+            [(snapshot_at, d, v, p) for d, v, p in rows],
+        )
+
+
+def follower_growth_summary(days: int = 30) -> dict:
+    """Renvoie un dict {days_covered, total_new_followers, last_known_total, daily_avg}."""
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            """SELECT date, new_followers, total_followers FROM follower_growth
+               WHERE date > date('now', ? || ' days')
+               ORDER BY date DESC""",
+            (f"-{days}",),
+        ).fetchall()
+    if not rows:
+        return {"days_covered": 0, "total_new_followers": 0, "last_known_total": None, "daily_avg": 0.0}
+    total_new = sum(r[1] for r in rows)
+    last_total = next((r[2] for r in rows if r[2] is not None), None)
+    return {
+        "days_covered": len(rows),
+        "total_new_followers": total_new,
+        "last_known_total": last_total,
+        "daily_avg": round(total_new / len(rows), 2),
+    }
+
+
+def latest_audience_snapshot() -> dict[str, list[tuple[str, float]]]:
+    """Renvoie {dimension: [(value, percentage), ...]} pour le snapshot le plus récent."""
+    init_db()
+    with _conn() as conn:
+        last_ts = conn.execute(
+            "SELECT MAX(snapshot_at) FROM audience_snapshot"
+        ).fetchone()[0]
+        if not last_ts:
+            return {}
+        rows = conn.execute(
+            "SELECT dimension, value, percentage FROM audience_snapshot WHERE snapshot_at = ? ORDER BY dimension, percentage DESC",
+            (last_ts,),
+        ).fetchall()
+    out: dict[str, list[tuple[str, float]]] = {}
+    for dim, val, pct in rows:
+        out.setdefault(dim, []).append((val, pct))
+    return out
 
 
 def _conn():

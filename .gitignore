@@ -1,30 +1,31 @@
 __pycache__/
 *.pyc
 *.pyo
-*.egg-info/
-build/
-dist/
 
 .venv/
 node_modules/
 
 .env
+.env.bak*
 *.pem
 *.key
 credentials*
 
+# Backups locaux (sed -i.bak, etc.)
+*.bak
+
+# Streamlit cache
+.streamlit/
+
+# Data orphelin (créé par Docker avant la migration vers ${LINKEDIN_DATA_DIR})
+/data/
+
 logs/
 output/
-reports/
-data/
 *.db
-*.lock
 .pipeline.lock
 .last_token_refresh
 
 .tmp_test_data/
 .DS_Store
 *.swp
-
-# Node — package.json est versionné (contient overrides CVE), pas le lock
-package-lock.json
