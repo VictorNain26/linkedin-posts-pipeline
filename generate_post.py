@@ -40,7 +40,7 @@ from agents import (
     _load_learnings_block,
     _system_with_learnings,
 )
-from anthropic_client import call_tool
+from anthropic_client import call_tool, get_run_usage_summary, reset_run_usage
 from config import (
     ANTI_AI_PATTERNS,
     CTA_POST_SUFFIX,
@@ -267,6 +267,7 @@ def _detect_semantic_violations(slides: list[dict]) -> list[str]:
                 "phrases d'experts pompiers sans ancrage factuel. "
                 "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits."
             ),
+            "cache_control": {"type": "ephemeral"},
         }],
         user_text=(
             "<slides>\n" + text + "\n</slides>\n\n"
@@ -336,6 +337,7 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
                 "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
                 "seuls les faits inventés sont des violations."
             ),
+            "cache_control": {"type": "ephemeral"},
         }],
         user_text=(
             f"{article_ctx_short}\n\n"
@@ -715,6 +717,7 @@ def generate(topic_input=None) -> dict:
     Génère un post à partir d'une OU plusieurs news RSS.
     Aucun fallback silencieux : si aucune news n'est exploitable, raise NoUsableNewsError.
     """
+    reset_run_usage()
     news_list = _normalize_news_input(topic_input)
     if not news_list:
         raise NoUsableNewsError(
@@ -771,6 +774,8 @@ def generate(topic_input=None) -> dict:
 
     print("[agent8] CTA comment writer…", file=sys.stderr)
     first_comment = agent8_cta_comment(article_ctx_winner, angle)
+
+    print(f"[cost] {get_run_usage_summary()}", file=sys.stderr)
 
     # Décide du format pour cette publication (carousel / text / poll)
     format_choice, format_reason = select_format()

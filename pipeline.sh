@@ -207,7 +207,7 @@ out = pathlib.Path(sys.argv[2])
 (out / "post.txt").write_text(data["post_text"], encoding="utf-8")
 (out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
 (out / "slides.json").write_text(
-    json.dumps(data["slides_structured"], ensure_ascii=False),
+    json.dumps(data["slides"], ensure_ascii=False),
     encoding="utf-8",
 )
 PY
@@ -423,7 +423,7 @@ out = pathlib.Path(sys.argv[2])
 (out / "post.txt").write_text(data["post_text"], encoding="utf-8")
 (out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
 (out / "slides.json").write_text(
-    json.dumps(data["slides_structured"], ensure_ascii=False),
+    json.dumps(data["slides"], ensure_ascii=False),
     encoding="utf-8",
 )
 PY
