@@ -297,7 +297,8 @@ def formula_win_rate(days: int = 90) -> dict[str, dict]:
     with _conn() as conn:
         rows = conn.execute(
             """SELECT hv.formula, COUNT(*) as picked,
-                      COALESCE(AVG(CASE WHEN pa.metric='IMPRESSION' THEN pa.count END), 0) as avg_impressions
+                      COALESCE(AVG(CASE WHEN pa.metric='IMPRESSION'  THEN pa.count END), 0) as avg_impressions,
+                      COALESCE(AVG(CASE WHEN pa.metric='INTERACTION' THEN pa.count END), 0) as avg_interactions
                FROM hook_variants hv
                LEFT JOIN posts p ON p.id = hv.post_id
                LEFT JOIN post_analytics pa ON pa.post_id = p.id
@@ -306,7 +307,10 @@ def formula_win_rate(days: int = 90) -> dict[str, dict]:
                GROUP BY hv.formula""",
             (f"-{days}",),
         ).fetchall()
-    return {row[0]: {"picked": row[1], "avg_impressions": int(row[2])} for row in rows}
+    return {
+        row[0]: {"picked": row[1], "avg_impressions": int(row[2]), "avg_interactions": int(row[3])}
+        for row in rows
+    }
 
 
 # ──────────────────────────────────────────────────────────────

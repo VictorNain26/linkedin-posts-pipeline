@@ -85,9 +85,8 @@ def load_formula_stats(days: int = 90) -> pd.DataFrame:
         return pd.read_sql_query(
             """SELECT hv.formula,
                       COUNT(*) AS picked_count,
-                      COALESCE(AVG(CASE WHEN pa.metric='IMPRESSION' THEN pa.count END), 0) AS avg_impressions,
-                      COALESCE(AVG(CASE WHEN pa.metric='REACTION' THEN pa.count END), 0) AS avg_reactions,
-                      COALESCE(AVG(CASE WHEN pa.metric='COMMENT' THEN pa.count END), 0) AS avg_comments
+                      COALESCE(AVG(CASE WHEN pa.metric='IMPRESSION'   THEN pa.count END), 0) AS avg_impressions,
+                      COALESCE(AVG(CASE WHEN pa.metric='INTERACTION'  THEN pa.count END), 0) AS avg_interactions
                FROM hook_variants hv
                LEFT JOIN posts p ON p.id = hv.post_id
                LEFT JOIN post_analytics pa ON pa.post_id = p.id
@@ -121,11 +120,8 @@ def load_post_metrics_summary(days: int = 90) -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
         return pd.read_sql_query(
             """SELECT p.id, p.published_at, p.topic, p.format,
-                      MAX(CASE WHEN pa.metric='IMPRESSION' THEN pa.count END) AS impressions,
-                      MAX(CASE WHEN pa.metric='REACTION' THEN pa.count END) AS reactions,
-                      MAX(CASE WHEN pa.metric='COMMENT' THEN pa.count END) AS comments,
-                      MAX(CASE WHEN pa.metric='RESHARE' THEN pa.count END) AS reshares,
-                      MAX(CASE WHEN pa.metric='POST_SAVE' THEN pa.count END) AS saves
+                      MAX(CASE WHEN pa.metric='IMPRESSION'  THEN pa.count END) AS impressions,
+                      MAX(CASE WHEN pa.metric='INTERACTION' THEN pa.count END) AS interactions
                FROM posts p
                LEFT JOIN post_analytics pa ON pa.post_id = p.id
                WHERE p.status = 'published'

@@ -361,14 +361,12 @@ def page_analytics():
             "Importe un XLSX LinkedIn (section 📤 en bas) pour peupler le dashboard."
         )
     else:
-        # 4 KPIs principaux engagement
+        # 3 KPIs principaux engagement (XLSX LinkedIn = IMPRESSION + INTERACTION agrégé)
         if not posts_metrics.empty:
-            kpi_cols = st.columns(5)
+            kpi_cols = st.columns(3)
             kpi_cols[0].metric("Posts", len(posts_metrics))
             kpi_cols[1].metric("Impressions", int(posts_metrics["impressions"].fillna(0).sum()))
-            kpi_cols[2].metric("Reactions", int(posts_metrics["reactions"].fillna(0).sum()))
-            kpi_cols[3].metric("Comments", int(posts_metrics["comments"].fillna(0).sum()))
-            kpi_cols[4].metric("Saves (360Brew #1)", int(posts_metrics["saves"].fillna(0).sum()))
+            kpi_cols[2].metric("Interactions", int(posts_metrics["interactions"].fillna(0).sum()))
 
         # 3 KPIs croissance abonnés (si data dispo)
         if not growth.empty:
@@ -411,19 +409,20 @@ def page_analytics():
     # ──────────────────────────────────────────────────────────
     if not posts_metrics.empty:
         st.header("📋 Posts détaillés")
+        st.caption(
+            "Interactions = réactions + commentaires + partages (agrégé XLSX LinkedIn). "
+            "Métriques séparées disponibles via API scope `r_member_postAnalytics` uniquement."
+        )
         st.dataframe(
-            posts_metrics[["published_at", "topic", "format", "impressions", "reactions", "comments", "reshares", "saves"]],
+            posts_metrics[["published_at", "topic", "format", "impressions", "interactions"]],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "published_at": st.column_config.DatetimeColumn("Date", format="YYYY-MM-DD HH:mm"),
                 "topic": st.column_config.TextColumn("Topic", width="large"),
                 "format": "Format",
-                "impressions": st.column_config.NumberColumn("Impr.", format="%d"),
-                "reactions": st.column_config.NumberColumn("Reactions", format="%d"),
-                "comments": st.column_config.NumberColumn("Comments", format="%d"),
-                "reshares": st.column_config.NumberColumn("Reshares", format="%d"),
-                "saves": st.column_config.NumberColumn("Saves", format="%d"),
+                "impressions": st.column_config.NumberColumn("Impressions", format="%d"),
+                "interactions": st.column_config.NumberColumn("Interactions", format="%d"),
             },
         )
 
@@ -439,11 +438,13 @@ def page_analytics():
         if formula.empty:
             st.caption("Pas de data — il faut posts publiés + analytics importés.")
         else:
-            tab_pick, tab_impr = st.tabs(["# de fois gagnante", "Impressions moy."])
+            tab_pick, tab_impr, tab_inter = st.tabs(["# de fois gagnante", "Impressions moy.", "Interactions moy."])
             with tab_pick:
                 st.bar_chart(formula.set_index("formula")["picked_count"])
             with tab_impr:
                 st.bar_chart(formula.set_index("formula")["avg_impressions"])
+            with tab_inter:
+                st.bar_chart(formula.set_index("formula")["avg_interactions"])
 
     with col_fb:
         st.subheader("Distribution formats")
