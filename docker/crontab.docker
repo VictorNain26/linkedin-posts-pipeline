@@ -9,11 +9,9 @@
 # Pas besoin de PATH manuel : Docker fournit /usr/local/bin par défaut.
 # Format cron classique : minute hour day month weekday command
 
-# Posts evergreen prospect — mardi + jeudi 10h30
-30 10 * * 2,4 cd /app && ./pipeline.sh
-
-# Daily 21h — analytics
-0 21 * * * cd /app && ./fetch_analytics.sh
+# Posts evergreen prospect — mardi + mercredi + jeudi 10h30
+# (sweet spot LinkedIn 2026 : 3/sem, source Buffer 2M+ posts / van der Blom)
+30 10 * * 2,3,4 cd /app && ./pipeline.sh
 
 # Daily 8h — healthcheck
 0 8 * * * cd /app && ./healthcheck.sh
