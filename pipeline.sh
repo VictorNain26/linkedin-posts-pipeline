@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # pipeline.sh — cron entrypoint mar/mer/jeu
-# Usage: ./pipeline.sh [--dry-run | --select-only]
+# Usage: ./pipeline.sh [--dry-run | --select-only | --draft]
 #
-# Deux phases distinctes (crons séparés) :
+# Trois phases distinctes (crons séparés) :
 #   08h00 : ./pipeline.sh --select-only  → score RSS, sauvegarde state/pending_article.json
-#   10h30 : ./pipeline.sh [--dry-run]    → lit pending_article.json, génère, publie
+#   09h00 : ./pipeline.sh --draft        → lit pending_article.json, 8 agents + PDF,
+#                                           sauvegarde state/pending_draft.json, envoie email
+#   10h30 : ./pipeline.sh [--dry-run]    → lit pending_draft.json, publie si state/approved
 #
 # Sécurité : aucune donnée n'est interpolée dans des chaînes Python.
 # Tout passe par stdin (JSON) ou fichiers — pas de shell injection possible.
@@ -23,11 +25,15 @@ LOG_FILE="$LOG_DIR/pipeline.log"
 METRICS_FILE="$LOG_DIR/metrics.jsonl"
 
 PENDING_ARTICLE="$STATE_DIR/pending_article.json"
+PENDING_DRAFT="$STATE_DIR/pending_draft.json"
+APPROVED_FLAG="$STATE_DIR/approved"
 
 DRY_RUN="false"
 SELECT_ONLY="false"
+DRAFT_MODE="false"
 [[ "${1:-}" == "--dry-run" ]]    && DRY_RUN="true"
 [[ "${1:-}" == "--select-only" ]] && SELECT_ONLY="true"
+[[ "${1:-}" == "--draft" ]] && DRAFT_MODE="true"
 
 # ── Helpers ──────────────────────────────────────────────────
 log() {
@@ -97,8 +103,8 @@ if ! flock -n 9; then
     exit 0
 fi
 
-log "=== Pipeline start (dry_run=$DRY_RUN, select_only=$SELECT_ONLY) ==="
-metric event "start" dry_run "$DRY_RUN" select_only "$SELECT_ONLY"
+log "=== Pipeline start (dry_run=$DRY_RUN, select_only=$SELECT_ONLY, draft_mode=$DRAFT_MODE) ==="
+metric event "start" dry_run "$DRY_RUN" select_only "$SELECT_ONLY" draft_mode "$DRAFT_MODE"
 
 # ══════════════════════════════════════════════════════════════
 # MODE --select-only : fetch RSS + score → sauvegarde pending_article.json
@@ -129,6 +135,175 @@ print(arts[0]['title'][:80] if arts else '(vide)')
     exit 0
 fi
 
+# ══════════════════════════════════════════════════════════════
+# MODE --draft : lit pending_article.json, 8 agents + PDF,
+# sauvegarde pending_draft.json, envoie email de rappel
+# Cron 09h00 : génération du draft avant validation dashboard.
+# ══════════════════════════════════════════════════════════════
+if [ "$DRAFT_MODE" = "true" ]; then
+    log "=== Draft generation start ==="
+    metric event "draft_start"
+
+    if [ ! -f "$PENDING_ARTICLE" ]; then
+        log "[draft] No pending_article.json — run --select-only first (or wait for 08h00 cron)"
+        metric event "draft_skip" reason "no_pending_article"
+        exit 0
+    fi
+
+    # Read article + generate (with fallback to article #2)
+    NEWS_FILE=$(mktemp "$OUTPUT_DIR/.news-XXXXXX.json")
+    cp "$PENDING_ARTICLE" "$NEWS_FILE"
+    rm -f "$PENDING_ARTICLE"
+
+    RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
+    GEN_SUCCESS="false"
+    for ARTICLE_IDX in 0 1; do
+        SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
+        python3 -c "
+import json, sys
+arts = json.load(open(sys.argv[1]))
+idx = int(sys.argv[2])
+print(json.dumps([arts[idx]] if idx < len(arts) else [], ensure_ascii=False))
+" "$NEWS_FILE" "$ARTICLE_IDX" > "$SINGLE_ARTICLE_FILE" 2>>"$LOG_FILE"
+        SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "0")
+        if [ "$SINGLE_COUNT" = "0" ]; then rm -f "$SINGLE_ARTICLE_FILE"; break; fi
+        ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "?")
+        log "[draft] Trying article #$((ARTICLE_IDX+1)): $ARTICLE_TITLE"
+        if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
+            GEN_SUCCESS="true"
+            rm -f "$SINGLE_ARTICLE_FILE"
+            metric step "draft_generate" article_idx "$ARTICLE_IDX"
+            break
+        else
+            GEN_EXIT=$?
+            log "WARNING: generate failed on article #$((ARTICLE_IDX+1)) (exit $GEN_EXIT) — trying next"
+            rm -f "$SINGLE_ARTICLE_FILE"
+        fi
+    done
+
+    if [ "$GEN_SUCCESS" = "false" ]; then
+        log "ERROR: draft generation failed on all articles"
+        metric event "draft_abort" reason "generate_failed"
+        rm -f "$RESULT_FILE" "$NEWS_FILE"
+        exit 1
+    fi
+
+    # Save files to output dir
+    SLUG=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['slug'])" "$RESULT_FILE")
+    DATE_TAG=$(date +%Y-%m-%d)
+    POST_DIR="$OUTPUT_DIR/${DATE_TAG}-${SLUG}"
+    mkdir -p "$POST_DIR"
+    cp "$RESULT_FILE" "$POST_DIR/result.json"
+    cp "$NEWS_FILE" "$POST_DIR/news.json"
+
+    python3 - "$POST_DIR/result.json" "$POST_DIR" <<'PY' 2>>"$LOG_FILE"
+import json, sys, pathlib
+data = json.load(open(sys.argv[1]))
+out = pathlib.Path(sys.argv[2])
+(out / "carousel.md").write_text(
+    "\n\n".join(f"SLIDE {i+1}: {s}" for i, s in enumerate(data["slides"])),
+    encoding="utf-8",
+)
+(out / "post.txt").write_text(data["post_text"], encoding="utf-8")
+(out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
+(out / "slides.json").write_text(
+    json.dumps(data["slides_structured"], ensure_ascii=False),
+    encoding="utf-8",
+)
+PY
+
+    # PDF generation if carousel
+    FORMAT_CHOICE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['format'])" "$POST_DIR/result.json")
+    EXPECTED_CAROUSEL_FORMAT=$(python3 -c "from config import FORMAT_CAROUSEL; print(FORMAT_CAROUSEL)")
+    if [ "$FORMAT_CHOICE" = "$EXPECTED_CAROUSEL_FORMAT" ]; then
+        log "[draft] Generating PDF…"
+        node "$DIR/html_to_pdf.js" "$POST_DIR/slides.json" "$POST_DIR/carousel.pdf" 2>>"$LOG_FILE"
+        PDF_SIZE=$(stat -c%s "$POST_DIR/carousel.pdf" 2>/dev/null || echo "0")
+        if [ "$PDF_SIZE" -lt 10000 ]; then
+            log "ERROR: PDF too small ($PDF_SIZE bytes)"
+            metric event "draft_abort" reason "pdf_invalid"
+            exit 1
+        fi
+        log "[draft] PDF OK: $PDF_SIZE bytes"
+    fi
+
+    # Write pending_draft.json (state file for dashboard + publish phase)
+    rm -f "$APPROVED_FLAG"  # reset any stale approval
+    python3 - "$POST_DIR/result.json" "$POST_DIR" "$PENDING_DRAFT" <<'PY' 2>>"$LOG_FILE"
+import json, sys, datetime
+data = json.load(open(sys.argv[1]))
+post_dir = sys.argv[2]
+draft = {
+    "generated_at": datetime.datetime.now().isoformat(),
+    "post_dir": post_dir,
+    "article_title": data.get("article_title", ""),
+    "article_url": data.get("article_url", ""),
+    "format": data["format"],
+    "topic": data["topic"],
+    "slug": data["slug"],
+    "post_text": data["post_text"],
+    "first_comment": data["first_comment"],
+    "slides_structured": data.get("slides_structured", []),
+    "hook_winner_formula": data["hook_winner_formula"],
+    "hook_winner_reason": data["hook_winner_reason"],
+    "hook_variants": data.get("hook_variants", []),
+}
+open(sys.argv[3], "w", encoding="utf-8").write(json.dumps(draft, ensure_ascii=False, indent=2))
+print(f"[draft] pending_draft.json saved: {draft['article_title'][:60]}")
+PY
+    DRAFT_TITLE=$(python3 -c "import json; d=json.load(open('$PENDING_DRAFT')); print(d.get('article_title','?')[:60])" 2>/dev/null || echo "?")
+    log "[draft] Draft ready: $DRAFT_TITLE"
+    log "[draft] ACTION REQUIRED : approuver dans le dashboard avant 10h30"
+
+    # Email de rappel (si Gmail configuré)
+    python3 - "$PENDING_DRAFT" <<'PY' 2>>"$LOG_FILE"
+import json, os, sys, smtplib
+from email.mime.text import MIMEText
+sender = os.environ.get("GMAIL_SENDER", "").strip()
+password = os.environ.get("GMAIL_APP_PASSWORD", "").strip()
+recipient = os.environ.get("WEEKLY_REPORT_RECIPIENT", sender)
+if not sender or not password:
+    print("[draft] Gmail not configured — skip email reminder", file=sys.stderr)
+    sys.exit(0)
+data = json.load(open(sys.argv[1]))
+title = data.get("article_title", "?")
+fmt = data.get("format", "?")
+subject = f"[LinkedIn Pipeline] Draft à valider avant 10h30 — {title[:50]}"
+body = f"""Un draft est prêt pour validation.
+
+Article source : {title}
+Format : {fmt}
+Généré à : {data.get('generated_at', '?')}
+
+Hook :
+{data.get('post_text', '')[:300]}…
+
+→ Ouvrir le dashboard pour approuver ou rejeter :
+  http://victorserv:8501
+
+Le post sera publié automatiquement à 10h30 si approuvé.
+Si aucune action → skip silencieux, aucune publication.
+"""
+msg = MIMEText(body, "plain", "utf-8")
+msg["Subject"] = subject
+msg["From"] = sender
+msg["To"] = recipient
+try:
+    with smtplib.SMTP("smtp.gmail.com", 587) as s:
+        s.starttls()
+        s.login(sender, password)
+        s.sendmail(sender, [recipient], msg.as_string())
+    print(f"[draft] Reminder email sent to {recipient}")
+except Exception as e:
+    print(f"[draft] Email failed (non-blocking): {e}", file=sys.stderr)
+PY
+
+    metric event "draft_done" title "$DRAFT_TITLE"
+    rm -f "$NEWS_FILE" "$RESULT_FILE"
+    log "=== Draft done ==="
+    exit 0
+fi
+
 # ── Kill-switch UI : si .publi_paused existe ET qu'on n'est pas en dry-run, skip ──
 # Touch ce fichier (depuis le dashboard ou à la main) pour mettre en pause les publications
 # auto sans toucher au crontab. Les dry-runs (tests) restent autorisés pour qualif contenu.
@@ -152,79 +327,92 @@ if [ "$ALREADY" = "1" ]; then
     exit 0
 fi
 
-# ── 1. Fetch RSS (ou lecture pending_article.json) ──────────
-NEWS_FILE=$(mktemp "$OUTPUT_DIR/.news-XXXXXX.json")
-if [ -f "$PENDING_ARTICLE" ]; then
-    log "[1/4] Using pre-selected article (from 08h00 select run)…"
-    cp "$PENDING_ARTICLE" "$NEWS_FILE"
-    rm -f "$PENDING_ARTICLE"
-    metric step "rss" source "pending_article"
-else
-    log "[1/4] Fetching RSS (no pre-selection found)…"
-    python3 "$DIR/rss_fetch.py" > "$NEWS_FILE" 2>>"$LOG_FILE"
-    metric step "rss" source "live"
-fi
-NEWS_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$NEWS_FILE" 2>/dev/null || echo "0")
-log "RSS items: $NEWS_COUNT"
-metric step "rss" items "$NEWS_COUNT"
-
-if [ "$NEWS_COUNT" = "0" ]; then
-    log "ERROR: RSS returned 0 relevant items — no post today (no silent fallback)"
-    metric event "abort" reason "rss_empty"
-    exit 1
+# ── Vérification draft + approbation ────────────────────────
+if [ "$DRY_RUN" = "false" ]; then
+    if [ ! -f "$PENDING_DRAFT" ]; then
+        log "SKIP: aucun draft en attente (pipeline.sh --draft non exécuté ou déjà publié)"
+        metric event "skip" reason "no_draft"
+        exit 0
+    fi
+    if [ ! -f "$APPROVED_FLAG" ]; then
+        log "SKIP: draft non approuvé via dashboard — aucune publication aujourd'hui"
+        metric event "skip" reason "not_approved"
+        exit 0
+    fi
+    log "Draft approuvé — lecture du post pré-généré…"
 fi
 
-# ── 2. Génération (8 agents) — fallback sur article #2 si échec ──
-log "[2/4] Generating post (8 agents)…"
-RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
-GEN_SUCCESS="false"
-for ARTICLE_IDX in 0 1; do
-    # Extraire l'article N depuis la liste (Python inline)
-    SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
-    python3 -c "
+# ── Lecture du draft pré-généré (ou génération live en dry-run) ─
+if [ "$DRY_RUN" = "true" ]; then
+    # En dry-run : génération live (pas de draft requis)
+    NEWS_FILE=$(mktemp "$OUTPUT_DIR/.news-XXXXXX.json")
+    if [ -f "$PENDING_ARTICLE" ]; then
+        log "[dry-run] Using pre-selected article (from 08h00 select run)…"
+        cp "$PENDING_ARTICLE" "$NEWS_FILE"
+        rm -f "$PENDING_ARTICLE"
+        metric step "rss" source "pending_article"
+    else
+        log "[dry-run] Fetching RSS (no pre-selection found)…"
+        python3 "$DIR/rss_fetch.py" > "$NEWS_FILE" 2>>"$LOG_FILE"
+        metric step "rss" source "live"
+    fi
+    NEWS_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$NEWS_FILE" 2>/dev/null || echo "0")
+    log "RSS items: $NEWS_COUNT"
+    metric step "rss" items "$NEWS_COUNT"
+
+    if [ "$NEWS_COUNT" = "0" ]; then
+        log "ERROR: RSS returned 0 relevant items — no post today (no silent fallback)"
+        metric event "abort" reason "rss_empty"
+        exit 1
+    fi
+
+    RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
+    GEN_SUCCESS="false"
+    for ARTICLE_IDX in 0 1; do
+        SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
+        python3 -c "
 import json, sys
 arts = json.load(open(sys.argv[1]))
 idx = int(sys.argv[2])
 print(json.dumps([arts[idx]] if idx < len(arts) else [], ensure_ascii=False))
 " "$NEWS_FILE" "$ARTICLE_IDX" > "$SINGLE_ARTICLE_FILE" 2>>"$LOG_FILE"
 
-    SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "0")
-    if [ "$SINGLE_COUNT" = "0" ]; then
-        rm -f "$SINGLE_ARTICLE_FILE"
-        break
+        SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "0")
+        if [ "$SINGLE_COUNT" = "0" ]; then
+            rm -f "$SINGLE_ARTICLE_FILE"
+            break
+        fi
+
+        ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "?")
+        log "[dry-run] Trying article #$((ARTICLE_IDX+1)): $ARTICLE_TITLE"
+
+        if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
+            GEN_SUCCESS="true"
+            rm -f "$SINGLE_ARTICLE_FILE"
+            metric step "generate" article_idx "$ARTICLE_IDX"
+            break
+        else
+            GEN_EXIT=$?
+            log "WARNING: generate_post.py failed on article #$((ARTICLE_IDX+1)) (exit $GEN_EXIT) — trying next"
+            metric event "generate_retry" article_idx "$ARTICLE_IDX" exit_code "$GEN_EXIT"
+            rm -f "$SINGLE_ARTICLE_FILE"
+        fi
+    done
+
+    if [ "$GEN_SUCCESS" = "false" ]; then
+        log "ERROR: generate_post.py failed on all articles. See log for details."
+        metric event "abort" reason "generate_failed_all"
+        exit 1
     fi
 
-    ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "?")
-    log "[2/4] Trying article #$((ARTICLE_IDX+1)): $ARTICLE_TITLE"
+    SLUG=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['slug'])" "$RESULT_FILE")
+    DATE_TAG=$(date +%Y-%m-%d)
+    POST_DIR="$OUTPUT_DIR/${DATE_TAG}-${SLUG}"
+    mkdir -p "$POST_DIR"
+    mv "$RESULT_FILE" "$POST_DIR/result.json"
+    mv "$NEWS_FILE" "$POST_DIR/news.json"
 
-    if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
-        GEN_SUCCESS="true"
-        rm -f "$SINGLE_ARTICLE_FILE"
-        metric step "generate" article_idx "$ARTICLE_IDX"
-        break
-    else
-        GEN_EXIT=$?
-        log "WARNING: generate_post.py failed on article #$((ARTICLE_IDX+1)) (exit $GEN_EXIT) — trying next"
-        metric event "generate_retry" article_idx "$ARTICLE_IDX" exit_code "$GEN_EXIT"
-        rm -f "$SINGLE_ARTICLE_FILE"
-    fi
-done
-
-if [ "$GEN_SUCCESS" = "false" ]; then
-    log "ERROR: generate_post.py failed on all articles. See log for details."
-    metric event "abort" reason "generate_failed_all"
-    exit 1
-fi
-
-SLUG=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['slug'])" "$RESULT_FILE")
-DATE_TAG=$(date +%Y-%m-%d)
-POST_DIR="$OUTPUT_DIR/${DATE_TAG}-${SLUG}"
-mkdir -p "$POST_DIR"
-mv "$RESULT_FILE" "$POST_DIR/result.json"
-mv "$NEWS_FILE" "$POST_DIR/news.json"
-
-# Extract content to files (no shell interpolation)
-python3 - "$POST_DIR/result.json" "$POST_DIR" <<'PY' 2>>"$LOG_FILE"
+    python3 - "$POST_DIR/result.json" "$POST_DIR" <<'PY' 2>>"$LOG_FILE"
 import json, sys, pathlib
 data = json.load(open(sys.argv[1]))
 out = pathlib.Path(sys.argv[2])
@@ -235,34 +423,45 @@ out = pathlib.Path(sys.argv[2])
 (out / "post.txt").write_text(data["post_text"], encoding="utf-8")
 (out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
 (out / "slides.json").write_text(
-    json.dumps(data["slides"], ensure_ascii=False),
+    json.dumps(data["slides_structured"], ensure_ascii=False),
     encoding="utf-8",
 )
 PY
-FORMAT_CHOICE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['format'])" "$POST_DIR/result.json")
-log "Generated: $POST_DIR (format=$FORMAT_CHOICE)"
-metric step "generate" slug "$SLUG" format "$FORMAT_CHOICE"
+    FORMAT_CHOICE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['format'])" "$POST_DIR/result.json")
+    log "Generated: $POST_DIR (format=$FORMAT_CHOICE)"
+    metric step "generate" slug "$SLUG" format "$FORMAT_CHOICE"
 
-# ── 3. PDF carousel (uniquement si format=carousel) ─────────
-EXPECTED_CAROUSEL_FORMAT=$(python3 -c "from config import FORMAT_CAROUSEL; print(FORMAT_CAROUSEL)")
-if [ "$FORMAT_CHOICE" = "$EXPECTED_CAROUSEL_FORMAT" ]; then
-    log "[3/5] Generating PDF…"
-    node "$DIR/html_to_pdf.js" "$POST_DIR/slides.json" "$POST_DIR/carousel.pdf" 2>>"$LOG_FILE"
-    PDF_SIZE=$(stat -c%s "$POST_DIR/carousel.pdf" 2>/dev/null || echo "0")
-    if [ "$PDF_SIZE" -lt 10000 ]; then
-        log "ERROR: PDF too small ($PDF_SIZE bytes), aborting"
-        metric event "pdf_invalid" size "$PDF_SIZE"
-        exit 1
+    # PDF carousel (uniquement si format=carousel)
+    EXPECTED_CAROUSEL_FORMAT=$(python3 -c "from config import FORMAT_CAROUSEL; print(FORMAT_CAROUSEL)")
+    if [ "$FORMAT_CHOICE" = "$EXPECTED_CAROUSEL_FORMAT" ]; then
+        log "[dry-run] Generating PDF…"
+        node "$DIR/html_to_pdf.js" "$POST_DIR/slides.json" "$POST_DIR/carousel.pdf" 2>>"$LOG_FILE"
+        PDF_SIZE=$(stat -c%s "$POST_DIR/carousel.pdf" 2>/dev/null || echo "0")
+        if [ "$PDF_SIZE" -lt 10000 ]; then
+            log "ERROR: PDF too small ($PDF_SIZE bytes), aborting"
+            metric event "pdf_invalid" size "$PDF_SIZE"
+            exit 1
+        fi
+        log "PDF OK: $PDF_SIZE bytes"
+        metric step "pdf" size "$PDF_SIZE"
+    else
+        log "[dry-run] Skipping PDF (format=$FORMAT_CHOICE)"
     fi
-    log "PDF OK: $PDF_SIZE bytes"
-    metric step "pdf" size "$PDF_SIZE"
 else
-    log "[3/5] Skipping PDF (format=$FORMAT_CHOICE)"
+    # Publish mode : lit le draft pré-généré
+    POST_DIR=$(python3 -c "import json; print(json.load(open('$PENDING_DRAFT'))['post_dir'])")
+    FORMAT_CHOICE=$(python3 -c "import json; print(json.load(open('$PENDING_DRAFT'))['format'])")
+    SLUG=$(python3 -c "import json; print(json.load(open('$PENDING_DRAFT'))['slug'])")
+    log "Post dir: $POST_DIR (format=$FORMAT_CHOICE)"
+    metric step "publish" slug "$SLUG" format "$FORMAT_CHOICE"
+
+    # Nettoyer les flags d'état (avant publication pour éviter double-post si ctrl+c après)
+    rm -f "$PENDING_DRAFT" "$APPROVED_FLAG"
 fi
 
-# ── 4. Post LinkedIn (ou dry-run) ───────────────────────────
+# ── Post LinkedIn (ou dry-run) ───────────────────────────────
 if [ "$DRY_RUN" = "true" ]; then
-    log "[4/5] DRY RUN — post not published"
+    log "DRY RUN — post not published"
     log "  preview: $(head -c 120 "$POST_DIR/post.txt")…"
     log "  format : $FORMAT_CHOICE"
     log "  comment: $(head -c 120 "$POST_DIR/first_comment.txt")…"
@@ -292,7 +491,7 @@ print(post_pk, file=sys.stderr)
 PY
     metric event "dry_run_done"
 else
-    log "[4/5] Posting to LinkedIn ($FORMAT_CHOICE)…"
+    log "Posting to LinkedIn ($FORMAT_CHOICE)…"
     export POST_DIR_ENV="$POST_DIR"
     POST_ID=$(python3 - <<'PY' 2>>"$LOG_FILE"
 import json, os, sys, pathlib
@@ -319,9 +518,9 @@ PY
     log "Posted: $POST_ID"
     metric step "post" linkedin_id "$POST_ID"
 
-    # ── 5. 1er commentaire (engagement, délai paramétrable) ─
+    # ── 1er commentaire (engagement, délai paramétrable) ─────
     COMMENT_DELAY=$(python3 -c "from config import FIRST_COMMENT_DELAY_SECONDS; print(FIRST_COMMENT_DELAY_SECONDS)")
-    log "[5/5] Sleeping ${COMMENT_DELAY}s before first comment…"
+    log "Sleeping ${COMMENT_DELAY}s before first comment…"
     sleep "$COMMENT_DELAY"
     export POST_ID
     COMMENT_ID=$(python3 - <<'PY' 2>>"$LOG_FILE"

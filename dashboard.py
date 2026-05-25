@@ -52,7 +52,10 @@ def _safe_upload_path(upload_dir: Path, raw_filename: str) -> Path:
         raise ValueError(f"path escapes upload dir: {raw_filename!r} → {candidate}") from e
     return candidate
 
-from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR
+from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR, STATE_DIR
+
+PENDING_DRAFT = STATE_DIR / "pending_draft.json"
+APPROVED_FLAG = STATE_DIR / "approved"
 
 st.set_page_config(
     page_title="LinkedIn Posts — Dashboard",
@@ -561,7 +564,81 @@ def page_learnings():
         st.json(data)
 
 
+def page_approbation():
+    st.title("✅ Approbation du draft")
+
+    if not PENDING_DRAFT.exists():
+        st.info("Aucun draft en attente. Le pipeline génère à 09h00 (mar/mer/jeu).")
+        return
+
+    draft = json.loads(PENDING_DRAFT.read_text(encoding="utf-8"))
+    approved = APPROVED_FLAG.exists()
+
+    st.markdown(f"**Article source :** {draft.get('article_title', '?')}")
+    if draft.get("article_url"):
+        st.markdown(f"[Lire l'article source]({draft['article_url']})")
+    st.caption(f"Généré le {draft.get('generated_at', '?')[:16]} · Format : `{draft.get('format', '?')}`")
+
+    st.markdown("---")
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        if approved:
+            st.success("✅ **Approuvé** — sera publié à 10h30")
+            if st.button("↩️ Annuler l'approbation", type="secondary"):
+                APPROVED_FLAG.unlink(missing_ok=True)
+                st.rerun()
+        else:
+            if st.button("✅ Approuver", type="primary", use_container_width=True):
+                APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
+                st.rerun()
+    with col2:
+        if st.button("❌ Rejeter ce draft", type="secondary", use_container_width=True):
+            PENDING_DRAFT.unlink(missing_ok=True)
+            APPROVED_FLAG.unlink(missing_ok=True)
+            st.rerun()
+
+    st.markdown("---")
+
+    # Preview post text
+    with st.expander("📝 Texte du post (hook + hashtags)", expanded=True):
+        st.text(draft.get("post_text", ""))
+
+    # Preview slides
+    slides = draft.get("slides_structured", [])
+    if slides:
+        with st.expander(f"🎞️ Slides ({len(slides)})", expanded=True):
+            for i, slide in enumerate(slides):
+                st.markdown(f"**Slide {i+1}** — {slide.get('main', '')}")
+                if slide.get("sub"):
+                    st.caption(slide["sub"])
+
+    # Preview PDF if carousel
+    post_dir = Path(draft.get("post_dir", ""))
+    pdf_path = post_dir / "carousel.pdf"
+    if pdf_path.exists():
+        with st.expander("📄 Aperçu PDF carousel"):
+            pages = render_pdf_pages(str(pdf_path), scale=1.2)
+            for img in pages[:3]:
+                st.image(img, use_container_width=True)
+
+    # First comment preview
+    with st.expander("💬 Premier commentaire (CTA)"):
+        st.text(draft.get("first_comment", ""))
+
+    # Hook variants
+    variants = draft.get("hook_variants", [])
+    if variants:
+        with st.expander("🎣 Variantes de hook testées"):
+            winner = draft.get("hook_winner_formula", "")
+            for v in variants:
+                prefix = "🏆 " if v.get("formula") == winner else "   "
+                st.markdown(f"{prefix}**[{v.get('formula', '')}]** {v.get('hook', '')}")
+            st.caption(f"Raison du choix : {draft.get('hook_winner_reason', '')}")
+
+
 PAGES = {
+    "✅ Approbation": page_approbation,
     "📊 Analytics + IA": page_analytics,
     "📜 Historique posts publiés": page_historique,
     "🧪 Tests (dry-run)": page_tests,
@@ -569,6 +646,10 @@ PAGES = {
 
 st.sidebar.title("LinkedIn Pipeline")
 st.sidebar.caption("Dashboard — Victor Lenain")
+if PENDING_DRAFT.exists():
+    approved = APPROVED_FLAG.exists()
+    badge = "✅ Approuvé" if approved else "⏳ En attente"
+    st.sidebar.warning(f"Draft prêt : {badge}")
 choice = st.sidebar.radio("Pages", list(PAGES.keys()), label_visibility="collapsed")
 
 st.sidebar.markdown("---")
