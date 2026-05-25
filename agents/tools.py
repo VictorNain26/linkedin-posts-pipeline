@@ -1,5 +1,5 @@
 """
-JSON Schemas pour les 6 tools utilisés par les agents Claude (tool_use forcé).
+JSON Schemas pour les 8 tools utilisés par les agents Claude (tool_use forcé).
 
 Pattern CCA-F D4 §3 : structured output via `tool_use` + JSON Schema strict
 → zéro parsing libre, validation syntaxique gratuite par l'API Anthropic.
@@ -8,6 +8,8 @@ Chaque tool est utilisé par 1 ou 2 agents :
 - PAIN_TOOL          → agent 1 (Pain Excavator)
 - ANGLE_TOOL         → agent 2 (Angle Scout)
 - SLIDES_TOOL        → agents 3, 4, 5 (Slide Architect / Pen / Anti-AI Detector)
+- VIOLATIONS_TOOL    → agent 5 (détection sémantique patterns IA)
+- FACTUAL_CHECK_TOOL → agent 5b (cross-check faits slides vs article source)
 - HOOK_VARIANTS_TOOL → agent 6 (Hook Generator)
 - HOOK_JUDGE_TOOL    → agent 7 (Hook Judge)
 - CTA_COMMENT_TOOL   → agent 8 (CTA Comment)
@@ -77,6 +79,46 @@ SLIDES_TOOL = {
             }
         },
         "required": ["slides"],
+    },
+}
+
+VIOLATIONS_TOOL = {
+    "name": "submit_violations",
+    "description": "Report AI-sounding patterns detected in the slides.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "clean": {
+                "type": "boolean",
+                "description": "True if no AI patterns detected.",
+            },
+            "violations": {
+                "type": "array",
+                "items": {"type": "string", "description": "Verbatim phrase that sounds AI-generated."},
+                "description": "Empty list if clean=true.",
+            },
+        },
+        "required": ["clean", "violations"],
+    },
+}
+
+FACTUAL_CHECK_TOOL = {
+    "name": "submit_factual_check",
+    "description": "Report facts/numbers in slides not supported by the source article.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "clean": {
+                "type": "boolean",
+                "description": "True if every fact in slides is traceable to the source article.",
+            },
+            "violations": {
+                "type": "array",
+                "items": {"type": "string", "description": "Specific claim not found in article."},
+                "description": "Empty list if clean=true.",
+            },
+        },
+        "required": ["clean", "violations"],
     },
 }
 

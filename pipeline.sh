@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
-# pipeline.sh — cron entrypoint mardi/jeudi
-# Usage: ./pipeline.sh [--dry-run]
+# pipeline.sh — cron entrypoint mar/mer/jeu
+# Usage: ./pipeline.sh [--dry-run | --select-only]
+#
+# Deux phases distinctes (crons séparés) :
+#   08h00 : ./pipeline.sh --select-only  → score RSS, sauvegarde state/pending_article.json
+#   10h30 : ./pipeline.sh [--dry-run]    → lit pending_article.json, génère, publie
 #
 # Sécurité : aucune donnée n'est interpolée dans des chaînes Python.
 # Tout passe par stdin (JSON) ou fichiers — pas de shell injection possible.
@@ -12,13 +16,18 @@ DIR="$(cd "$(dirname "$0")" && pwd)"
 DATA_DIR="${LINKEDIN_DATA_DIR:-$HOME/linkedin-posts-data}"
 LOG_DIR="$DATA_DIR/logs"
 OUTPUT_DIR="$DATA_DIR/output"
-mkdir -p "$LOG_DIR" "$OUTPUT_DIR"
+STATE_DIR="$DATA_DIR/state"
+mkdir -p "$LOG_DIR" "$OUTPUT_DIR" "$STATE_DIR"
 
 LOG_FILE="$LOG_DIR/pipeline.log"
 METRICS_FILE="$LOG_DIR/metrics.jsonl"
 
+PENDING_ARTICLE="$STATE_DIR/pending_article.json"
+
 DRY_RUN="false"
-[[ "${1:-}" == "--dry-run" ]] && DRY_RUN="true"
+SELECT_ONLY="false"
+[[ "${1:-}" == "--dry-run" ]]    && DRY_RUN="true"
+[[ "${1:-}" == "--select-only" ]] && SELECT_ONLY="true"
 
 # ── Helpers ──────────────────────────────────────────────────
 log() {
@@ -88,8 +97,37 @@ if ! flock -n 9; then
     exit 0
 fi
 
-log "=== Pipeline start (dry_run=$DRY_RUN) ==="
-metric event "start" dry_run "$DRY_RUN"
+log "=== Pipeline start (dry_run=$DRY_RUN, select_only=$SELECT_ONLY) ==="
+metric event "start" dry_run "$DRY_RUN" select_only "$SELECT_ONLY"
+
+# ══════════════════════════════════════════════════════════════
+# MODE --select-only : fetch RSS + score → sauvegarde pending_article.json
+# Cron 08h00 : articles du matin capturés, Victor peut relire avant 10h30.
+# ══════════════════════════════════════════════════════════════
+if [ "$SELECT_ONLY" = "true" ]; then
+    log "[select] Fetching + scoring RSS articles…"
+    TMP_SELECT=$(mktemp "$OUTPUT_DIR/.select-XXXXXX.json")
+    python3 "$DIR/rss_fetch.py" > "$TMP_SELECT" 2>>"$LOG_FILE"
+    COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$TMP_SELECT" 2>/dev/null || echo "0")
+    log "[select] $COUNT articles pertinents trouvés"
+    if [ "$COUNT" = "0" ]; then
+        log "[select] Aucun article pertinent — pending_article.json non créé"
+        rm -f "$TMP_SELECT"
+        metric event "select_empty"
+        exit 0
+    fi
+    mv "$TMP_SELECT" "$PENDING_ARTICLE"
+    SELECTED_TITLE=$(python3 -c "
+import json, sys
+arts = json.load(open(sys.argv[1]))
+print(arts[0]['title'][:80] if arts else '(vide)')
+" "$PENDING_ARTICLE" 2>/dev/null || echo "(inconnu)")
+    log "[select] Article retenu : $SELECTED_TITLE"
+    log "[select] Sauvegardé dans $PENDING_ARTICLE"
+    metric event "select_done" count "$COUNT" title "$SELECTED_TITLE"
+    log "=== Select done ==="
+    exit 0
+fi
 
 # ── Kill-switch UI : si .publi_paused existe ET qu'on n'est pas en dry-run, skip ──
 # Touch ce fichier (depuis le dashboard ou à la main) pour mettre en pause les publications
@@ -114,10 +152,18 @@ if [ "$ALREADY" = "1" ]; then
     exit 0
 fi
 
-# ── 1. Fetch RSS ────────────────────────────────────────────
-log "[1/4] Fetching RSS…"
+# ── 1. Fetch RSS (ou lecture pending_article.json) ──────────
 NEWS_FILE=$(mktemp "$OUTPUT_DIR/.news-XXXXXX.json")
-python3 "$DIR/rss_fetch.py" > "$NEWS_FILE" 2>>"$LOG_FILE"
+if [ -f "$PENDING_ARTICLE" ]; then
+    log "[1/4] Using pre-selected article (from 08h00 select run)…"
+    cp "$PENDING_ARTICLE" "$NEWS_FILE"
+    rm -f "$PENDING_ARTICLE"
+    metric step "rss" source "pending_article"
+else
+    log "[1/4] Fetching RSS (no pre-selection found)…"
+    python3 "$DIR/rss_fetch.py" > "$NEWS_FILE" 2>>"$LOG_FILE"
+    metric step "rss" source "live"
+fi
 NEWS_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$NEWS_FILE" 2>/dev/null || echo "0")
 log "RSS items: $NEWS_COUNT"
 metric step "rss" items "$NEWS_COUNT"
@@ -128,13 +174,45 @@ if [ "$NEWS_COUNT" = "0" ]; then
     exit 1
 fi
 
-# ── 2. Génération (8 agents) ────────────────────────────────
+# ── 2. Génération (8 agents) — fallback sur article #2 si échec ──
 log "[2/4] Generating post (8 agents)…"
 RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
-if ! python3 "$DIR/generate_post.py" < "$NEWS_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
-    GEN_EXIT=$?
-    log "ERROR: generate_post.py failed (exit $GEN_EXIT). See log for details."
-    metric event "abort" reason "generate_failed" exit_code "$GEN_EXIT"
+GEN_SUCCESS="false"
+for ARTICLE_IDX in 0 1; do
+    # Extraire l'article N depuis la liste (Python inline)
+    SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
+    python3 -c "
+import json, sys
+arts = json.load(open(sys.argv[1]))
+idx = int(sys.argv[2])
+print(json.dumps([arts[idx]] if idx < len(arts) else [], ensure_ascii=False))
+" "$NEWS_FILE" "$ARTICLE_IDX" > "$SINGLE_ARTICLE_FILE" 2>>"$LOG_FILE"
+
+    SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "0")
+    if [ "$SINGLE_COUNT" = "0" ]; then
+        rm -f "$SINGLE_ARTICLE_FILE"
+        break
+    fi
+
+    ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "?")
+    log "[2/4] Trying article #$((ARTICLE_IDX+1)): $ARTICLE_TITLE"
+
+    if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
+        GEN_SUCCESS="true"
+        rm -f "$SINGLE_ARTICLE_FILE"
+        metric step "generate" article_idx "$ARTICLE_IDX"
+        break
+    else
+        GEN_EXIT=$?
+        log "WARNING: generate_post.py failed on article #$((ARTICLE_IDX+1)) (exit $GEN_EXIT) — trying next"
+        metric event "generate_retry" article_idx "$ARTICLE_IDX" exit_code "$GEN_EXIT"
+        rm -f "$SINGLE_ARTICLE_FILE"
+    fi
+done
+
+if [ "$GEN_SUCCESS" = "false" ]; then
+    log "ERROR: generate_post.py failed on all articles. See log for details."
+    metric event "abort" reason "generate_failed_all"
     exit 1
 fi
 

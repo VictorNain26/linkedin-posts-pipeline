@@ -17,19 +17,23 @@ from agents.system import _load_learnings_block, _system_with_learnings
 from agents.tools import (
     ANGLE_TOOL,
     CTA_COMMENT_TOOL,
+    FACTUAL_CHECK_TOOL,
     HOOK_JUDGE_TOOL,
     HOOK_VARIANTS_TOOL,
     PAIN_TOOL,
     SLIDES_TOOL,
+    VIOLATIONS_TOOL,
 )
 
 __all__ = [
     "ANGLE_TOOL",
     "CTA_COMMENT_TOOL",
+    "FACTUAL_CHECK_TOOL",
     "HOOK_JUDGE_TOOL",
     "HOOK_VARIANTS_TOOL",
     "PAIN_TOOL",
     "SLIDES_TOOL",
+    "VIOLATIONS_TOOL",
     "_load_learnings_block",
     "_system_with_learnings",
 ]

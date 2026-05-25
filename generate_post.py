@@ -31,10 +31,12 @@ import time
 from agents import (
     ANGLE_TOOL,
     CTA_COMMENT_TOOL,
+    FACTUAL_CHECK_TOOL,
     HOOK_JUDGE_TOOL,
     HOOK_VARIANTS_TOOL,
     PAIN_TOOL,
     SLIDES_TOOL,
+    VIOLATIONS_TOOL,
     _load_learnings_block,
     _system_with_learnings,
 )
@@ -60,8 +62,8 @@ from history import keyword_overlap_ratio
 
 # Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
 __all__ = [
-    "ANGLE_TOOL", "CTA_COMMENT_TOOL", "HOOK_JUDGE_TOOL", "HOOK_VARIANTS_TOOL",
-    "PAIN_TOOL", "SLIDES_TOOL",
+    "ANGLE_TOOL", "CTA_COMMENT_TOOL", "FACTUAL_CHECK_TOOL", "HOOK_JUDGE_TOOL",
+    "HOOK_VARIANTS_TOOL", "PAIN_TOOL", "SLIDES_TOOL", "VIOLATIONS_TOOL",
     "_load_learnings_block", "_system_with_learnings",
 ]
 
@@ -242,15 +244,53 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
 
 
 def _detect_violations(slides: list[dict]) -> list[str]:
+    """Détection par string matching exact sur ANTI_AI_PATTERNS (rapide)."""
     text = " ".join(s["main"] + " " + s.get("sub", "") for s in slides)
     return [p for p in ANTI_AI_PATTERNS if p in text]
 
 
+def _detect_semantic_violations(slides: list[dict]) -> list[str]:
+    """Détection sémantique des clichés IA via Haiku — capture les variants non couverts
+    par le string matching (ex : 'dans un monde en pleine transformation')."""
+    text = "\n".join(
+        f"S{i+1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides)
+    )
+    out = call_tool(
+        model=HAIKU_MODEL,
+        system=[{
+            "type": "text",
+            "text": (
+                "Tu identifies les clichés de texte généré par IA dans un post LinkedIn business. "
+                "Exemples de patterns à détecter : prophéties vagues ('l'IA va révolutionner'), "
+                "superlatifs sans preuve ('incroyable', 'majeur'), révolutions annoncées, "
+                "formules creuses ('dans un monde en constante/pleine évolution/transformation'), "
+                "phrases d'experts pompiers sans ancrage factuel. "
+                "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits."
+            ),
+        }],
+        user_text=(
+            "<slides>\n" + text + "\n</slides>\n\n"
+            "<task>Si aucun cliché IA : clean=true, violations=[]. "
+            "Sinon : clean=false, liste chaque phrase suspecte verbatim (max 6).</task>"
+        ),
+        tool=VIOLATIONS_TOOL,
+        max_tokens=300,
+    )
+    if out.get("clean", True):
+        return []
+    return out.get("violations", [])
+
+
 def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
-    """Retry-with-feedback (CCA-F D4 §4) : re-prompt avec les violations explicites."""
+    """Retry-with-feedback (CCA-F D4 §4) :
+    - Passe 1 : string matching exact (ANTI_AI_PATTERNS)
+    - Passe 2 : détection sémantique Haiku (variants non couverts par string match)
+    Re-prompt avec violations explicites si l'une ou l'autre détecte quelque chose."""
     current = slides
     for attempt in range(MAX_DETECTOR_RETRIES + 1):
-        violations = _detect_violations(current)
+        exact = _detect_violations(current)
+        semantic = _detect_semantic_violations(current)
+        violations = list(dict.fromkeys(exact + semantic))  # dédupliqué, ordre préservé
         if not violations:
             return current
         if attempt == MAX_DETECTOR_RETRIES:
@@ -275,6 +315,66 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
         )
         current = out["slides"]
     return current
+
+
+def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
+    """Cross-check faits/chiffres des slides vs article source (Haiku).
+    Détecte les affirmations inventées ou extrapolées non présentes dans l'article.
+    Si violations trouvées : Sonnet réécrit les slides fautives (1 tentative)."""
+    slides_text = "\n".join(
+        f"S{i+1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides)
+    )
+    out = call_tool(
+        model=HAIKU_MODEL,
+        system=[{
+            "type": "text",
+            "text": (
+                "Tu vérifies la cohérence factuelle entre un article source et des slides LinkedIn. "
+                "Ton rôle : détecter les chiffres, affirmations ou faits dans les slides "
+                "qui ne peuvent PAS être tracés à l'article. "
+                "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
+                "seuls les faits inventés sont des violations."
+            ),
+        }],
+        user_text=(
+            f"{article_ctx}\n\n"
+            "<slides_to_verify>\n" + slides_text + "\n</slides_to_verify>\n\n"
+            "<task>Compare chaque fait/chiffre des slides à l'article. "
+            "Si tout est sourcé dans l'article : clean=true, violations=[]. "
+            "Sinon : clean=false, liste chaque claim non sourcé (verbatim, max 5).</task>"
+        ),
+        tool=FACTUAL_CHECK_TOOL,
+        max_tokens=400,
+    )
+
+    if out.get("clean", True) or not out.get("violations"):
+        return slides
+
+    violations = out["violations"]
+    print(f"[agent5b] factual violations detected: {violations}", file=sys.stderr)
+
+    outline_str = "\n".join(
+        f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
+        for i, s in enumerate(slides)
+    )
+    violations_str = " | ".join(violations)
+    fixed = call_tool(
+        model=SONNET_MODEL,
+        system=_system_with_learnings(),
+        user_text=(
+            f"{article_ctx}\n\n"
+            "Les slides ci-dessous contiennent des affirmations NON présentes dans l'article source.\n"
+            f"VIOLATIONS : {violations_str}\n\n"
+            "Réécris en remplaçant chaque violation par :\n"
+            "- soit le fait réel présent dans l'article,\n"
+            "- soit une reformulation en question ouverte si le fait est incertain.\n"
+            "Garde la structure, l'angle et le hook intacts.\n\n"
+            "Slides à corriger :\n" + outline_str
+        ),
+        tool=SLIDES_TOOL,
+        max_tokens=TOKEN_BUDGETS["detector"],
+    )
+    return fixed["slides"]
 
 
 def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> list[dict]:
@@ -602,8 +702,10 @@ def _run_once(article_ctx: str) -> tuple[list[dict], dict]:
     outline = agent3_slide_architect(article_ctx, angle)
     print("[agent4] Victor's pen…", file=sys.stderr)
     draft = agent4_victors_pen(article_ctx, outline)
-    print("[agent5] Anti-AI detector…", file=sys.stderr)
-    final = agent5_anti_ai_detector(draft)
+    print("[agent5] Anti-AI detector (string + semantic)…", file=sys.stderr)
+    cleaned = agent5_anti_ai_detector(draft)
+    print("[agent5b] Factual check (slides vs article)…", file=sys.stderr)
+    final = agent5b_factual_check(article_ctx, cleaned)
     return final, angle
 
 
