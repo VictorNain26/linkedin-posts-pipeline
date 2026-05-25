@@ -60,18 +60,22 @@ RSS_SOURCES = [
     # Officiel OpenAI — annonces produit IA leader marché (signal très frais)
     "https://openai.com/news/rss.xml",
     # CNIL — actualités RGPD + IA (conformité = douleur #1 des décideurs PME FR)
-    # Feed général ; le scoring Haiku écarte le non-IA.
     "https://www.cnil.fr/fr/rss.xml",
     # Maddyness — écosystème tech/IA FR, angle business naturel (levées, cas d'usage)
-    # Feed général ; scoring Haiku écarte le hors-sujet IA.
     "https://www.maddyness.com/feed/",
     # MIT Sloan Management Review — angle "AI for managers", traduction stratégie corporate
     "https://sloanreview.mit.edu/feed/",
+    # Siècle Digital — IA + digital business FR, cible directeurs et fondateurs
+    "https://siecledigital.fr/feed/",
+    # Blog du Modérateur — outils IA/digital FR, audience managers + PME (très frais)
+    "https://www.blogdumoderateur.com/feed/",
+    # MIT Technology Review — IA accessible, angle impact business (scoring Haiku filtre)
+    "https://www.technologyreview.com/feed/",
 ]
 RSS_FETCH_TIMEOUT = 10
-# Lookback : par défaut 48h (signal frais pour le ton "actualité"). Override possible
-# via env var pour des tests ponctuels quand les flux sont calmes (ex: RSS_LOOKBACK_HOURS=168).
-RSS_LOOKBACK_HOURS = int(os.environ.get("RSS_LOOKBACK_HOURS", "48"))
+# Lookback : 96h (4j) pour couvrir les week-ends + lundis creux.
+# Override possible via env var (ex: RSS_LOOKBACK_HOURS=168 pour test manuel).
+RSS_LOOKBACK_HOURS = int(os.environ.get("RSS_LOOKBACK_HOURS", "96"))
 RSS_ARTICLE_FETCH_TIMEOUT = 15
 RSS_ARTICLE_MAX_CHARS = 4000
 

@@ -290,7 +290,7 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
     return sorted(zip(scores, items, strict=False), key=lambda x: x[0], reverse=True)
 
 
-def get_top_news(n: int = 5, min_score: int = 6) -> list[dict]:
+def get_top_news(n: int = 5, min_score: int = 5) -> list[dict]:
     """Top N news pertinentes (score >= min_score), enrichies avec contenu article."""
     items = fetch_recent_items()
     if not items:
