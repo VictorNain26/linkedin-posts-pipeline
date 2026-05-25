@@ -1,31 +1,26 @@
 # Crontab Docker — lu par supercronic dans le container.
-# NE PAS confondre avec CRON_DISABLED.txt à la racine du repo
-# (qui documente les crons pour install HOST native sans Docker).
-#
-# Ce fichier est chargé par supercronic au démarrage du container :
-#   ENTRYPOINT [dumb-init] CMD [supercronic, -inotify, /app/crontab]
-#
-# Logs : supercronic logge sur stdout → consultable via `docker logs linkedin-pipeline`.
-# Pas besoin de PATH manuel : Docker fournit /usr/local/bin par défaut.
-# Format cron classique : minute hour day month weekday command
 
 # ── Phase 1 : sélection article (mar/mer/jeu 08h00) ─────────
-# Fetch RSS, score Haiku, sauvegarde state/pending_article.json
-# Victor peut vérifier l'article retenu avant 10h30.
 0 8 * * 2,3,4 cd /app && ./pipeline.sh --select-only
 
-# ── Phase 2 : génération + publication (mar/mer/jeu 10h30) ──
-# Lit pending_article.json si présent, sinon fetch live.
+# ── Phase 2 : génération draft (mar/mer/jeu 09h00) ──────────
+# Tourne 8 agents, génère PDF, sauvegarde state/pending_draft.json
+# Envoie email de rappel si Gmail configuré.
+0 9 * * 2,3,4 cd /app && ./pipeline.sh --draft
+
+# ── Phase 3 : publication (mar/mer/jeu 10h30) ────────────────
+# Publie seulement si state/approved existe (validation dashboard).
+# Skip silencieux si non approuvé.
 30 10 * * 2,3,4 cd /app && ./pipeline.sh
 
 # ── Healthcheck daily 08h00 (lun/ven/sam/dim) ───────────────
 0 8 * * 1,5,6,0 cd /app && ./healthcheck.sh
 
-# Lundi 7h — weekly report
+# ── Rapport hebdomadaire (lundi 07h00) ───────────────────────
 0 7 * * 1 cd /app && ./weekly_report.sh
 
-# Daily 2h — backup du volume /data (rotation 14 jours)
+# ── Backup auto (daily 02h00) ─────────────────────────────────
 0 2 * * * cd /app && ./backup.sh
 
-# Daily 3h — cleanup outputs (>7j) + logs (>14j) + rotation metrics.jsonl
+# ── Cleanup espace disque (daily 03h00) ──────────────────────
 0 3 * * * cd /app && ./cleanup.sh

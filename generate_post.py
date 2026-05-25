@@ -201,7 +201,7 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
         for i, s in enumerate(slides_outline)
     )
     out = call_tool(
-        model=SONNET_MODEL,
+        model=HAIKU_MODEL,
         system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
@@ -289,7 +289,7 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
     current = slides
     for attempt in range(MAX_DETECTOR_RETRIES + 1):
         exact = _detect_violations(current)
-        semantic = _detect_semantic_violations(current)
+        semantic = _detect_semantic_violations(current) if not exact else []
         violations = list(dict.fromkeys(exact + semantic))  # dédupliqué, ordre préservé
         if not violations:
             return current
@@ -324,6 +324,7 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
     slides_text = "\n".join(
         f"S{i+1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides)
     )
+    article_ctx_short = article_ctx[:1500] + ("…" if len(article_ctx) > 1500 else "")
     out = call_tool(
         model=HAIKU_MODEL,
         system=[{
@@ -337,7 +338,7 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
             ),
         }],
         user_text=(
-            f"{article_ctx}\n\n"
+            f"{article_ctx_short}\n\n"
             "<slides_to_verify>\n" + slides_text + "\n</slides_to_verify>\n\n"
             "<task>Compare chaque fait/chiffre des slides à l'article. "
             "Si tout est sourcé dans l'article : clean=true, violations=[]. "
@@ -727,6 +728,7 @@ def generate(topic_input=None) -> dict:
     keywords: list[str] = []
     topic: str = ""
     article_ctx_winner = ""
+    winner_news: dict = {}
 
     for idx, news in enumerate(news_list):
         topic = _news_to_topic(news)
@@ -745,6 +747,7 @@ def generate(topic_input=None) -> dict:
         if overlap < KEYWORD_OVERLAP_THRESHOLD:
             print(f"[generate] news {idx + 1} accepted (overlap={overlap:.2f})", file=sys.stderr)
             article_ctx_winner = article_ctx
+            winner_news = news
             break
         print(
             f"[dedup] news {idx + 1} overlap={overlap:.2f} ≥ {KEYWORD_OVERLAP_THRESHOLD}, trying next",
@@ -797,6 +800,8 @@ def generate(topic_input=None) -> dict:
         "post_text": post_text,
         "first_comment": first_comment,
         "keywords": keywords,
+        "article_title": (winner_news.get("title") or "").strip(),
+        "article_url": (winner_news.get("url") or "").strip(),
     }
 
 
