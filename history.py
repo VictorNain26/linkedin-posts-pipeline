@@ -151,10 +151,25 @@ def _conn():
     return sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT)
 
 
+# Migrations idempotentes : colonnes coût ajoutées après le schéma initial.
+_MIGRATIONS = [
+    "ALTER TABLE posts ADD COLUMN cost_usd REAL",
+    "ALTER TABLE posts ADD COLUMN tokens_in INTEGER",
+    "ALTER TABLE posts ADD COLUMN tokens_out INTEGER",
+    "ALTER TABLE posts ADD COLUMN tokens_cache_write INTEGER",
+    "ALTER TABLE posts ADD COLUMN tokens_cache_read INTEGER",
+]
+
+
 def init_db():
     with _conn() as conn:
         for stmt in SCHEMA:
             conn.execute(stmt)
+        for stmt in _MIGRATIONS:
+            try:
+                conn.execute(stmt)
+            except sqlite3.OperationalError:
+                pass  # colonne déjà présente
 
 
 # ──────────────────────────────────────────────────────────────
@@ -169,13 +184,19 @@ def record_post(
     linkedin_post_id: str | None = None,
     linkedin_comment_id: str | None = None,
     status: str = "published",
+    cost_usd: float | None = None,
+    tokens_in: int | None = None,
+    tokens_out: int | None = None,
+    tokens_cache_write: int | None = None,
+    tokens_cache_read: int | None = None,
 ) -> int:
     init_db()
     with _conn() as conn:
         cur = conn.execute(
             """INSERT INTO posts
-               (published_at, topic, slug, format, keywords, linkedin_post_id, linkedin_comment_id, status)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (published_at, topic, slug, format, keywords, linkedin_post_id, linkedin_comment_id, status,
+                cost_usd, tokens_in, tokens_out, tokens_cache_write, tokens_cache_read)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 datetime.now().isoformat(),
                 topic,
@@ -185,6 +206,11 @@ def record_post(
                 linkedin_post_id,
                 linkedin_comment_id,
                 status,
+                cost_usd,
+                tokens_in,
+                tokens_out,
+                tokens_cache_write,
+                tokens_cache_read,
             ),
         )
         return cur.lastrowid

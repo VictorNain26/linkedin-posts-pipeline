@@ -47,19 +47,30 @@ def get_run_cost_usd() -> float:
     return total
 
 
-def get_run_usage_summary() -> str:
-    """Résumé texte des tokens utilisés + coût estimé."""
+def get_run_usage_totals() -> dict:
+    """Retourne les totaux de tokens + coût pour sauvegarde en DB."""
     total_in = total_out = total_cw = total_cr = 0
     for u in _run_usage:
         total_in += u.get("input_tokens", 0)
         total_out += u.get("output_tokens", 0)
         total_cw  += u.get("cache_creation_input_tokens", 0)
         total_cr  += u.get("cache_read_input_tokens", 0)
-    cost = get_run_cost_usd()
+    return {
+        "cost_usd": get_run_cost_usd(),
+        "tokens_in": total_in,
+        "tokens_out": total_out,
+        "tokens_cache_write": total_cw,
+        "tokens_cache_read": total_cr,
+    }
+
+
+def get_run_usage_summary() -> str:
+    """Résumé texte des tokens utilisés + coût estimé."""
+    t = get_run_usage_totals()
     return (
-        f"tokens in={total_in} out={total_out} "
-        f"cache_write={total_cw} cache_read={total_cr} "
-        f"→ ${cost:.4f}"
+        f"tokens in={t['tokens_in']} out={t['tokens_out']} "
+        f"cache_write={t['tokens_cache_write']} cache_read={t['tokens_cache_read']} "
+        f"→ ${t['cost_usd']:.4f}"
     )
 
 

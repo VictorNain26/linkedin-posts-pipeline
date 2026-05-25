@@ -22,13 +22,31 @@ from config import DB_PATH, OUTPUT_DIR
 @st.cache_data(ttl=60)
 def load_posts(status: str | None = None) -> pd.DataFrame:
     with sqlite3.connect(DB_PATH) as conn:
-        q = "SELECT id, published_at, topic, slug, format, linkedin_post_id, status FROM posts"
+        q = (
+            "SELECT id, published_at, topic, slug, format, linkedin_post_id, status, "
+            "cost_usd, tokens_in, tokens_out, tokens_cache_write, tokens_cache_read FROM posts"
+        )
         params: tuple = ()
         if status:
             q += " WHERE status = ?"
             params = (status,)
         q += " ORDER BY published_at DESC"
         return pd.read_sql_query(q, conn, params=params)
+
+
+@st.cache_data(ttl=60)
+def load_cost_summary() -> dict:
+    """Total dépensé + coût moyen par post (tous statuts confondus)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        row = conn.execute(
+            "SELECT COUNT(*), SUM(cost_usd), AVG(cost_usd) FROM posts WHERE cost_usd IS NOT NULL"
+        ).fetchone()
+    n, total, avg = row if row else (0, None, None)
+    return {
+        "n_tracked": n or 0,
+        "total_usd": total or 0.0,
+        "avg_usd": avg or 0.0,
+    }
 
 
 @st.cache_data(ttl=60)

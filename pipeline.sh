@@ -480,6 +480,11 @@ post_pk = record_post(
     linkedin_post_id=None,
     linkedin_comment_id=None,
     status="test",
+    cost_usd=data.get("cost_usd"),
+    tokens_in=data.get("tokens_in"),
+    tokens_out=data.get("tokens_out"),
+    tokens_cache_write=data.get("tokens_cache_write"),
+    tokens_cache_read=data.get("tokens_cache_read"),
 )
 record_hook_variants(
     post_id=post_pk,
@@ -550,6 +555,11 @@ post_pk = record_post(
     linkedin_post_id=os.environ["POST_ID"],
     linkedin_comment_id=os.environ.get("COMMENT_ID") or None,
     status="published",
+    cost_usd=data.get("cost_usd"),
+    tokens_in=data.get("tokens_in"),
+    tokens_out=data.get("tokens_out"),
+    tokens_cache_write=data.get("tokens_cache_write"),
+    tokens_cache_read=data.get("tokens_cache_read"),
 )
 record_hook_variants(
     post_id=post_pk,

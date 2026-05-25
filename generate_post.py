@@ -40,7 +40,7 @@ from agents import (
     _load_learnings_block,
     _system_with_learnings,
 )
-from anthropic_client import call_tool, get_run_usage_summary, reset_run_usage
+from anthropic_client import call_tool, get_run_usage_summary, get_run_usage_totals, reset_run_usage
 from config import (
     ANTI_AI_PATTERNS,
     CTA_POST_SUFFIX,
@@ -440,14 +440,16 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
     return out["variants"]
 
 
-def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> dict:
-    """Sélectionne le hook winner parmi les 3 variations (Haiku)."""
+def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
+    """Sélectionne le hook winner parmi les 3 variations (Haiku).
+    Reçoit `topic` (titre + résumé court) au lieu du full article_ctx — suffisant pour juger
+    des hooks déjà générés, économise ~1500 tokens Haiku par run."""
     variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
     out = call_tool(
         model=HAIKU_MODEL,
         system=_system_with_learnings(),
         user_text=(
-            f"{article_ctx}\n\n"
+            f"<topic>{topic}</topic>\n\n"
             f"<post_angle>{angle['angle']}</post_angle>\n\n"
             "<variants>\n" + variants_str + "\n</variants>\n\n"
             "<task>\n"
@@ -487,8 +489,11 @@ def agent7_hook_judge(article_ctx: str, variants: list[dict], angle: dict) -> di
     return out
 
 
-def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
+def agent8_cta_comment(topic: str, angle: dict) -> str:
     """1er commentaire = CTA direct sous le post (Haiku).
+
+    Reçoit `topic` (titre + résumé court) au lieu du full article_ctx — l'angle capture
+    déjà l'essence du sujet, économise ~1500 tokens Haiku par run.
 
     IMPORTANT 2026 : aucun lien externe dans le commentaire. LinkedIn pénalise
     jusqu'à -80% la visibilité des commentaires contenant un lien (Voketa Q1 2026,
@@ -498,7 +503,7 @@ def agent8_cta_comment(article_ctx: str, angle: dict) -> str:
         model=HAIKU_MODEL,
         system=_system_with_learnings(),
         user_text=(
-            f"{article_ctx}\n\n"
+            f"<topic>{topic}</topic>\n\n"
             f"<post_angle>{angle['angle']}</post_angle>\n\n"
             "<task>\n"
             "Écris le 1er commentaire que Victor poste sous son propre post.\n"
@@ -768,13 +773,14 @@ def generate(topic_input=None) -> dict:
     variants = agent6_hook_generator(article_ctx_winner, angle, slides)
 
     print("[agent7] Hook judge…", file=sys.stderr)
-    judge = agent7_hook_judge(article_ctx_winner, variants, angle)
+    judge = agent7_hook_judge(topic, variants, angle)
     winner_formula = judge["winner_formula"]
     winner_variant = next((v for v in variants if v["formula"] == winner_formula), variants[0])
 
     print("[agent8] CTA comment writer…", file=sys.stderr)
-    first_comment = agent8_cta_comment(article_ctx_winner, angle)
+    first_comment = agent8_cta_comment(topic, angle)
 
+    usage = get_run_usage_totals()
     print(f"[cost] {get_run_usage_summary()}", file=sys.stderr)
 
     # Décide du format pour cette publication (carousel / text / poll)
@@ -807,6 +813,11 @@ def generate(topic_input=None) -> dict:
         "keywords": keywords,
         "article_title": (winner_news.get("title") or "").strip(),
         "article_url": (winner_news.get("url") or "").strip(),
+        "cost_usd": usage["cost_usd"],
+        "tokens_in": usage["tokens_in"],
+        "tokens_out": usage["tokens_out"],
+        "tokens_cache_write": usage["tokens_cache_write"],
+        "tokens_cache_read": usage["tokens_cache_read"],
     }
 
 

@@ -91,6 +91,7 @@ def set_resumed() -> None:
 
 # DB queries + filesystem helpers extraits dans dashboard_queries.py (R6)
 from dashboard_queries import (  # noqa: E402
+    load_cost_summary,
     load_format_distribution,
     load_formula_stats,
     load_hook_variants,
@@ -113,9 +114,11 @@ def render_post(row: pd.Series) -> None:
     col_meta, col_metrics = st.columns([2, 1])
     with col_meta:
         st.markdown(f"**Topic** : {row['topic']}")
+        cost_val = row.get("cost_usd")
+        cost_str = f"  ·  **Coût** : `${cost_val:.4f}`" if pd.notna(cost_val) and cost_val else ""
         st.markdown(
             f"**Date** : {row['published_at']}  ·  **Format** : `{row['format']}`  ·  "
-            f"**LinkedIn URN** : `{row['linkedin_post_id'] or '—'}`"
+            f"**LinkedIn URN** : `{row['linkedin_post_id'] or '—'}`{cost_str}"
         )
 
     with col_metrics:
@@ -311,6 +314,22 @@ def page_analytics():
         "Workflow : exporte ton XLSX LinkedIn (lien dans la section 📤 en bas), drag-drop le, "
         "regénère l'analyse. Le pipeline applique ensuite les biases auto à chaque post."
     )
+
+    # ──────────────────────────────────────────────────────────
+    # 0. Coût de génération Anthropic
+    # ──────────────────────────────────────────────────────────
+    cost = load_cost_summary()
+    if cost["n_tracked"] > 0:
+        st.subheader("Coût génération Anthropic")
+        c1, c2, c3 = st.columns(3)
+        c1.metric("Total dépensé", f"${cost['total_usd']:.4f}")
+        c2.metric("Coût moyen / post", f"${cost['avg_usd']:.4f}")
+        c3.metric("Posts trackés", cost["n_tracked"])
+        st.caption(
+            "Coût = appels Anthropic pour les 8 agents de génération uniquement "
+            "(hors scoring RSS). Prix mai 2026 : Sonnet $3/$15/MTok, Haiku $0.80/$4/MTok."
+        )
+        st.markdown("---")
 
     # ──────────────────────────────────────────────────────────
     # 1. ANALYSE IA en premier (executive summary)
