@@ -17,7 +17,7 @@ services:
     volumes:
       - ./:/app:ro
       - ${LINKEDIN_DATA_DIR:-../linkedin-posts-data}:/data
-      - ./docker/crontab.docker:/app/crontab:ro
+      # crontab baked into image (docker/crontab.docker → COPY dans Dockerfile)
 
     environment:
       # Mode forcé pour tests (override le weekday auto-detect)
