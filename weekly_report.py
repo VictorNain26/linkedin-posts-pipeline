@@ -115,10 +115,7 @@ def _collect_data_for_analysis(days: int = 28) -> dict:
         posts_rows = conn.execute(
             """SELECT p.id, p.published_at, p.format, p.status, p.topic,
                       MAX(CASE WHEN pa.metric='IMPRESSION' THEN pa.count END) as impr,
-                      MAX(CASE WHEN pa.metric='INTERACTION' THEN pa.count END) as inter,
-                      MAX(CASE WHEN pa.metric='REACTION' THEN pa.count END) as react,
-                      MAX(CASE WHEN pa.metric='COMMENT' THEN pa.count END) as comm,
-                      MAX(CASE WHEN pa.metric='POST_SAVE' THEN pa.count END) as saves
+                      MAX(CASE WHEN pa.metric='INTERACTION' THEN pa.count END) as inter
                FROM posts p
                LEFT JOIN post_analytics pa ON pa.post_id = p.id
                WHERE p.published_at > datetime('now', ? || ' days')
@@ -147,7 +144,6 @@ def _collect_data_for_analysis(days: int = 28) -> dict:
             "id": r[0], "date": r[1][:10], "format": r[2], "status": r[3],
             "topic": (r[4] or "")[:120],
             "impressions": r[5], "interactions": r[6],
-            "reactions": r[7], "comments": r[8], "saves": r[9],
         }
         for r in posts_rows
     ]

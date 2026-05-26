@@ -202,7 +202,7 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
     )
     out = call_tool(
         model=HAIKU_MODEL,
-        system=_system_with_learnings(),
+        system=_system_with_learnings(HAIKU_MODEL),
         user_text=(
             f"{article_ctx}\n\n"
             "<task>\n"
@@ -447,7 +447,7 @@ def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
     variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
     out = call_tool(
         model=HAIKU_MODEL,
-        system=_system_with_learnings(),
+        system=_system_with_learnings(HAIKU_MODEL),
         user_text=(
             f"<topic>{topic}</topic>\n\n"
             f"<post_angle>{angle['angle']}</post_angle>\n\n"
@@ -501,7 +501,7 @@ def agent8_cta_comment(topic: str, angle: dict) -> str:
     """
     out = call_tool(
         model=HAIKU_MODEL,
-        system=_system_with_learnings(),
+        system=_system_with_learnings(HAIKU_MODEL),
         user_text=(
             f"<topic>{topic}</topic>\n\n"
             f"<post_angle>{angle['angle']}</post_angle>\n\n"

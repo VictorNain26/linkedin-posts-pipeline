@@ -22,7 +22,7 @@ TOKEN_BUDGETS = {
     "angle": 300,
     "architect": 900,
     "pen": 900,
-    "detector": 800,
+    "detector": 400,
     "hook_generator": 800,
     "hook_judge": 300,
     "comment_writer": 400,
@@ -57,8 +57,8 @@ STATE_DIR.mkdir(exist_ok=True)
 # - Pragmatic Engineer : audience eng managers, mismatch avec cible PME non-tech
 # ──────────────────────────────────────────────────────────────
 RSS_SOURCES = [
-    # Officiel OpenAI — annonces produit IA leader marché (signal très frais)
-    "https://openai.com/news/rss.xml",
+    # FrenchWeb — tech/IA business FR, angle fondateurs/CTOs/PME (cas d'usage, levées, digital)
+    "https://www.frenchweb.fr/feed/",
     # CNIL — actualités RGPD + IA (conformité = douleur #1 des décideurs PME FR)
     "https://www.cnil.fr/fr/rss.xml",
     # Maddyness — écosystème tech/IA FR, angle business naturel (levées, cas d'usage)
@@ -83,9 +83,24 @@ RSS_ARTICLE_MAX_CHARS = 4000
 # Persona, audience, douleurs, vocabulaire — structuré XML pour parsing clean par Claude
 # ──────────────────────────────────────────────────────────────
 PERSONA_BLOCK = """<persona>
-Tu écris pour le compte LinkedIn de Victor Lenain : développeur freelance
-full-stack + intégrateur IA basé à Paris. Il vend des prestations d'intégration
-IA (Claude/OpenAI/Mistral APIs, RAG, agents, MCP) à des PME et startups françaises.
+<role>
+Tu es le stratège marketing B2B et expert IA de Victor Lenain — dev freelance
+full-stack + intégrateur IA à Paris (Claude/OpenAI/Mistral APIs, RAG, agents, MCP).
+
+Expert IA : tu fais la différence entre une annonce fournisseur et un vrai changement
+opérationnel. Tu sais ce qu'un LLM fait réellement sur le terrain, ses limites concrètes,
+et ce qui a de la valeur pour une équipe vs ce qui est du marketing de lab.
+
+Stratège B2B : tu sais ce qui fait stopper le pouce d'un dirigeant PME ou d'un CTO.
+Un post performant extrait le bénéfice ou le risque CONCRET pour le lecteur.
+Un post raté reformule un communiqué de presse en changeant les mots.
+</role>
+
+<mission>
+Écrire les posts LinkedIn de Victor pour qu'il soit perçu comme un partenaire terrain
+qui comprend les vrais enjeux métier — pas comme un agrégateur d'actualités tech.
+Victor vend de la confiance autant que de la technique.
+</mission>
 </persona>"""
 
 AUDIENCE_BLOCK = """<audience>
@@ -211,12 +226,9 @@ Sans marquage spécial, tu peux :
 # Voice rules
 # ──────────────────────────────────────────────────────────────
 VOICE_RULES = """<voice>
-<author>Victor Lenain, dev freelance + intégrateur IA à Paris. Ton oral, direct, sans buzzwords.</author>
-
 <style_rules>
 - Phrases courtes : 15 mots max
 - 1 seule idée par slide
-- Chiffres concrets quand l'article les fournit (jamais inventés)
 - Marqueurs oraux acceptés : "Du coup", "N'hésite pas à", "Pas de souci", "Tu vois"
 - Imperfections volontaires bienvenues : une phrase abrupte, un connecteur oral
 - Aucun em-dash (—) dans le texte visible. Préfère le point ou les deux-points.
@@ -262,16 +274,11 @@ Si c'est le second, recommence.
 ANTI_AI_PATTERNS = [
     "—",
     "Concrètement,",
-    "notamment",
-    "spécifiquement",
-    "particulièrement",
     "systèmes en production",
     "from POC to prod",
     "no handoff",
     "sans handoff",
-    "robuste",
     "scalable",
-    "optimisé",
     # Tropes saturés LinkedIn 2026 (sources : Punchng, Medium-Onwuka, Dave Birss Bull Sheet)
     "Let that sink in",
     "Read that again",
@@ -304,39 +311,28 @@ ANTI_AI_PATTERNS = [
 ]
 
 
-def system_voice() -> list[dict]:
+def system_voice(model: str | None = None) -> list[dict]:
     """System blocks pour tous les agents — structure XML + prompt caching.
 
-    Best practice Anthropic 2026 : 3 blocs stables marqués cache_control=ephemeral.
-    Avec ~12 appels par run du pipeline qui partagent ce system (~5KB),
-    le cache hit donne -90% de coût/latence sur la portion système après le 1er appel.
-
-    Bloc 1 : persona + audience + vocabulaire (stable, change rarement)
-    Bloc 2 : factual grounding (stable, jamais touché)
-    Bloc 3 : voice + anti-AI patterns (stable hors ajout de pattern)
+    Sonnet : seuil cache 1024 tokens → 3 blocs séparés (chacun ~600-800 tokens, passe).
+    Haiku  : seuil cache 2048 tokens → 1 bloc fusionné (~2050 tokens, passe).
+    Contenu identique dans les deux cas, source unique.
     """
+    b1 = PERSONA_BLOCK + "\n\n" + AUDIENCE_BLOCK + "\n\n" + VOCABULARY_BLOCK
+    b2 = FACTUAL_GROUNDING_RULES
+    b3 = (
+        VOICE_RULES
+        + "\n\n<anti_ai_patterns>\n"
+        + "Patterns à ne JAMAIS produire (sortie immédiatement recalée par l'Anti-AI Detector) :\n"
+        + "\n".join(f"- {p}" for p in ANTI_AI_PATTERNS)
+        + "\n</anti_ai_patterns>"
+    )
+    if model == HAIKU_MODEL:
+        return [{"type": "text", "text": b1 + "\n\n" + b2 + "\n\n" + b3, "cache_control": {"type": "ephemeral"}}]
     return [
-        {
-            "type": "text",
-            "text": PERSONA_BLOCK + "\n\n" + AUDIENCE_BLOCK + "\n\n" + VOCABULARY_BLOCK,
-            "cache_control": {"type": "ephemeral"},
-        },
-        {
-            "type": "text",
-            "text": FACTUAL_GROUNDING_RULES,
-            "cache_control": {"type": "ephemeral"},
-        },
-        {
-            "type": "text",
-            "text": (
-                VOICE_RULES
-                + "\n\n<anti_ai_patterns>\n"
-                + "Patterns à ne JAMAIS produire (sortie immédiatement recalée par l'Anti-AI Detector) :\n"
-                + "\n".join(f"- {p}" for p in ANTI_AI_PATTERNS)
-                + "\n</anti_ai_patterns>"
-            ),
-            "cache_control": {"type": "ephemeral"},
-        },
+        {"type": "text", "text": b1, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": b2, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": b3, "cache_control": {"type": "ephemeral"}},
     ]
 
 

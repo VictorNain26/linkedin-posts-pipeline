@@ -74,13 +74,14 @@ def _load_learnings_block() -> dict | None:
     }
 
 
-def _system_with_learnings() -> list[dict]:
-    """system_voice() étendu d'un 4e bloc si learnings disponibles.
+def _system_with_learnings(model: str | None = None) -> list[dict]:
+    """system_voice(model) étendu d'un bloc learnings si disponibles.
 
     Utilisé comme `system=` dans tous les appels d'agents (sauf scoring RSS qui a
     son propre system block dédié au scoring).
+    Passer model=HAIKU_MODEL active le bloc fusionné (seuil cache 2048 tokens).
     """
-    blocks = system_voice()
+    blocks = system_voice(model)
     learn = _load_learnings_block()
     if learn is not None:
         blocks.append(learn)

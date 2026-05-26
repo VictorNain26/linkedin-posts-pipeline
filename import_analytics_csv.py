@@ -334,7 +334,7 @@ def import_xlsx(path: Path) -> dict:
             demo_rows = _parse_demographics_sheet(path, demo_sheet)
             print(f"[import] {demo_sheet}: {len(demo_rows)} lignes démo", file=sys.stderr)
             if demo_rows:
-                snapshot_at = datetime.now().isoformat()
+                snapshot_at = datetime.now().strftime("%Y-%m-%d")
                 insert_audience_snapshot(snapshot_at, demo_rows)
                 summary["demo_rows_imported"] = len(demo_rows)
         except (KeyError, ValueError, AttributeError, IndexError, OSError) as e:

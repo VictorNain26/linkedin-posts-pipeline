@@ -16,6 +16,7 @@ Accès :
 import json
 import re
 import sqlite3
+import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -56,6 +57,8 @@ from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR, STATE_DIR
 
 PENDING_DRAFT = STATE_DIR / "pending_draft.json"
 APPROVED_FLAG = STATE_DIR / "approved"
+PENDING_ARTICLE = STATE_DIR / "pending_article.json"
+_PIPELINE_SH = Path(__file__).parent / "pipeline.sh"
 
 st.set_page_config(
     page_title="LinkedIn Posts — Dashboard",
@@ -589,6 +592,32 @@ def page_approbation():
 
     if not PENDING_DRAFT.exists():
         st.info("Aucun draft en attente. Le pipeline génère à 09h00 (mar/mer/jeu).")
+        if st.button("🚀 Générer un post maintenant", type="primary"):
+            with st.spinner("Sélection de l'article (08h00)…"):
+                r1 = subprocess.run(
+                    ["bash", str(_PIPELINE_SH), "--select-only"],
+                    capture_output=True, text=True, timeout=120,
+                    cwd=str(_PIPELINE_SH.parent),
+                )
+            if r1.returncode != 0:
+                st.error("Échec --select-only")
+                st.text(r1.stderr[-1000:] if r1.stderr else "")
+                return
+            if not PENDING_ARTICLE.exists():
+                st.warning("Aucun article pertinent trouvé dans les flux RSS aujourd'hui.")
+                return
+            with st.spinner("Génération du post (~2 min)…"):
+                r2 = subprocess.run(
+                    ["bash", str(_PIPELINE_SH), "--draft"],
+                    capture_output=True, text=True, timeout=300,
+                    cwd=str(_PIPELINE_SH.parent),
+                )
+            if r2.returncode == 0:
+                st.success("Draft prêt.")
+                st.rerun()
+            else:
+                st.error(f"Échec --draft (exit {r2.returncode})")
+                st.text(r2.stderr[-1000:] if r2.stderr else "")
         return
 
     draft = json.loads(PENDING_DRAFT.read_text(encoding="utf-8"))
@@ -601,7 +630,7 @@ def page_approbation():
 
     st.markdown("---")
 
-    col1, col2 = st.columns([1, 1])
+    col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         if approved:
             st.success("✅ **Approuvé** — sera publié à 10h30")
@@ -613,7 +642,30 @@ def page_approbation():
                 APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
                 st.rerun()
     with col2:
-        if st.button("❌ Rejeter ce draft", type="secondary", use_container_width=True):
+        if st.button("🔄 Régénérer", type="secondary", use_container_width=True, disabled=approved):
+            post_dir = Path(draft.get("post_dir", ""))
+            news_src = post_dir / "news.json"
+            if news_src.exists():
+                PENDING_DRAFT.unlink(missing_ok=True)
+                APPROVED_FLAG.unlink(missing_ok=True)
+                import shutil
+                shutil.copy(news_src, PENDING_ARTICLE)
+                with st.spinner("Régénération en cours (~2 min)…"):
+                    result = subprocess.run(
+                        ["bash", str(_PIPELINE_SH), "--draft"],
+                        capture_output=True, text=True, timeout=300,
+                        cwd=str(_PIPELINE_SH.parent),
+                    )
+                if result.returncode == 0:
+                    st.success("Nouveau draft prêt.")
+                else:
+                    st.error(f"Échec régénération (exit {result.returncode}).")
+                    st.text(result.stderr[-1000:] if result.stderr else "")
+                st.rerun()
+            else:
+                st.error("Article source introuvable — impossible de régénérer.")
+    with col3:
+        if st.button("❌ Rejeter", type="secondary", use_container_width=True):
             PENDING_DRAFT.unlink(missing_ok=True)
             APPROVED_FLAG.unlink(missing_ok=True)
             st.rerun()
