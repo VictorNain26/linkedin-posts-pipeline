@@ -46,7 +46,7 @@ def _load_learnings_block() -> dict | None:
     except (ValueError, TypeError):
         pass
 
-    # Construit un block XML compact (limite 5 biases × ~30 tokens = ~150 tokens)
+    # Construit un block XML compact (limite 5 biases x ~30 tokens = ~150 tokens)
     lines = ["<past_learnings>"]
     lines.append(
         f'<context generated_at="{data.get("generated_at", "?")}" '

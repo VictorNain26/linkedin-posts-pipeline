@@ -1,7 +1,5 @@
 """Tests pour _safe_filename + _safe_upload_path (dashboard R2 — anti path traversal)."""
 
-import importlib
-import sys
 from pathlib import Path
 
 import pytest

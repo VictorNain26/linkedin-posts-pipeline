@@ -7,7 +7,7 @@ import openpyxl
 import pytest
 
 
-def _build_test_xlsx(path):
+def _build_test_xlsx(path):  # noqa: PLR0915
     """Crée un XLSX synthétique avec la structure LinkedIn FR (5 feuilles)."""
     wb = openpyxl.Workbook()
     wb.remove(wb.active)  # vire la feuille par défaut

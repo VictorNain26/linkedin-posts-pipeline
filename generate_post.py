@@ -49,7 +49,6 @@ from config import (
     HASHTAGS,
     KEYWORD_OVERLAP_THRESHOLD,
     MAX_DETECTOR_RETRIES,
-    PROFILE_URL,
     SLIDE_COUNT_MAX,
     SLIDE_COUNT_MIN,
     SLIDE_COUNT_TARGET,
@@ -58,7 +57,6 @@ from config import (
 )
 from format_selector import select_format
 from history import keyword_overlap_ratio
-
 
 # Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
 __all__ = [

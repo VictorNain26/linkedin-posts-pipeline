@@ -109,7 +109,7 @@ def _parse_top_posts_sheet(xlsx_path: Path, sheet_name: str) -> list[dict]:
     Format : 2 tableaux côte-à-côte (col 0-2 = Interactions, col 4-6 = Impressions).
     Header sur row 2 (rows 0-1 = commentaire LinkedIn + vide). On merge sur URL.
     """
-    import pandas as pd
+    import pandas as pd  # noqa: PLC0415
 
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name, engine="openpyxl", header=None, skiprows=3)
     if df.empty:
@@ -166,7 +166,7 @@ def _parse_top_posts_sheet(xlsx_path: Path, sheet_name: str) -> list[dict]:
 
 def _parse_followers_sheet(xlsx_path: Path, sheet_name: str) -> tuple[list[tuple[str, int]], int | None]:
     """Renvoie (liste de (date, new_followers), total à la dernière date)."""
-    import pandas as pd
+    import pandas as pd  # noqa: PLC0415
 
     df_raw = pd.read_excel(xlsx_path, sheet_name=sheet_name, engine="openpyxl", header=None)
     if df_raw.empty:
@@ -190,7 +190,7 @@ def _parse_followers_sheet(xlsx_path: Path, sheet_name: str) -> tuple[list[tuple
 
 def _parse_demographics_sheet(xlsx_path: Path, sheet_name: str) -> list[tuple[str, str, float]]:
     """Renvoie une liste de (dimension, value, percentage). Header sur row 0."""
-    import pandas as pd
+    import pandas as pd  # noqa: PLC0415
 
     df = pd.read_excel(xlsx_path, sheet_name=sheet_name, engine="openpyxl", header=0)
     if df.empty:
@@ -254,14 +254,14 @@ def _match_or_create_post(post: dict) -> int:
 # ──────────────────────────────────────────────────────────────
 # Main : import_xlsx
 # ──────────────────────────────────────────────────────────────
-def import_xlsx(path: Path) -> dict:
+def import_xlsx(path: Path) -> dict:  # noqa: PLR0912, PLR0915
     """Import un XLSX LinkedIn FR. Returns summary dict."""
     try:
-        import pandas as pd  # noqa: F401
+        import pandas as pd  # noqa: PLC0415
     except ImportError as e:
         raise RuntimeError("pandas + openpyxl requis (cf. requirements.txt)") from e
 
-    import pandas as pd
+    import pandas as pd  # noqa: PLC0415
 
     xls = pd.ExcelFile(path, engine="openpyxl")
     print(f"[import] feuilles détectées : {xls.sheet_names}", file=sys.stderr)

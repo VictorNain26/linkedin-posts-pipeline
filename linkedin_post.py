@@ -62,7 +62,7 @@ def _request_with_retry(method: str, url: str, **kwargs) -> requests.Response:
     last_exc: Exception | None = None
     for attempt in range(MAX_HTTP_RETRIES):
         try:
-            resp = requests.request(method, url, **kwargs)
+            resp = requests.request(method, url, **kwargs)  # noqa: S113 — timeout injected via kwargs.setdefault above
             if resp.status_code == 429:
                 wait = int(resp.headers.get("Retry-After", "0")) or HTTP_RETRY_BASE_DELAY * (2 ** attempt)
                 print(f"[linkedin] 429 rate limit, sleep {wait}s ({attempt+1}/{MAX_HTTP_RETRIES})", file=sys.stderr)

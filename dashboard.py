@@ -15,16 +15,13 @@ Accès :
 
 import json
 import re
+import shutil
 import sqlite3
 import subprocess
-import sys
-from datetime import datetime
 from pathlib import Path
 
 import pandas as pd
-import pypdfium2 as pdfium
 import streamlit as st
-
 
 # ──────────────────────────────────────────────────────────────
 # Path safety helpers (R2 — anti path traversal sur file_uploader)
@@ -53,7 +50,7 @@ def _safe_upload_path(upload_dir: Path, raw_filename: str) -> Path:
         raise ValueError(f"path escapes upload dir: {raw_filename!r} → {candidate}") from e
     return candidate
 
-from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR, STATE_DIR
+from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR, STATE_DIR  # noqa: E402
 
 PENDING_DRAFT = STATE_DIR / "pending_draft.json"
 APPROVED_FLAG = STATE_DIR / "approved"
@@ -110,7 +107,7 @@ from dashboard_queries import (  # noqa: E402
 # ──────────────────────────────────────────────────────────────
 # Rendu d'un post (utilisé par les pages Historique et Tests)
 # ──────────────────────────────────────────────────────────────
-def render_post(row: pd.Series) -> None:
+def render_post(row: pd.Series) -> None:  # noqa: PLR0912
     post_id = int(row["id"])
     pdir = post_dir_for(row["published_at"], row["slug"])
 
@@ -216,7 +213,7 @@ def page_tests():
             render_post(row)
 
 
-def _render_ai_analysis_section():
+def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
     """Section 'Analyse IA' au-dessus des data brutes. Affiche le résumé Sonnet
     + biases actifs + 5 recos, avec bouton de régénération."""
     st.header("🧠 Analyse — Marketing Lead B2B")
@@ -231,7 +228,7 @@ def _render_ai_analysis_section():
         with c1:
             if st.button("🔄 Générer maintenant (~$0.10)", key="gen_learnings_empty"):
                 with st.spinner("Claude Sonnet analyse..."):
-                    from weekly_report import generate_learnings
+                    from weekly_report import generate_learnings  # noqa: PLC0415
                     try:
                         new_data = generate_learnings(days=28)
                         if new_data:
@@ -261,7 +258,7 @@ def _render_ai_analysis_section():
         st.write("")  # spacing
         if st.button("🔄 Regénérer (~$0.10)", key="regen_learnings_section", use_container_width=True):
             with st.spinner("Claude Sonnet analyse..."):
-                from weekly_report import generate_learnings
+                from weekly_report import generate_learnings  # noqa: PLC0415
                 try:
                     new_data = generate_learnings(days=28)
                     if new_data:
@@ -310,7 +307,7 @@ def _render_ai_analysis_section():
     st.markdown("---")
 
 
-def page_analytics():
+def page_analytics():  # noqa: PLR0912, PLR0915
     st.title("📊 Analytics")
     st.caption(
         "Analyse IA + métriques live + démographie audience. "
@@ -485,7 +482,7 @@ def page_analytics():
             saved_path.write_bytes(uploaded.getbuffer())
 
             try:
-                from import_analytics_csv import import_csv as run_import
+                from import_analytics_csv import import_csv as run_import  # noqa: PLC0415
                 with st.spinner("Import en cours..."):
                     summary = run_import(saved_path)
                 cols = st.columns(4)
@@ -506,7 +503,7 @@ def page_analytics():
 # ──────────────────────────────────────────────────────────────
 # Sidebar nav
 # ──────────────────────────────────────────────────────────────
-def page_learnings():
+def page_learnings():  # noqa: PLR0915
     st.title("🧠 Learnings — bias auto injectés dans le pipeline")
     st.caption(
         "Généré chaque lundi 7h par `weekly_report.sh` via Claude Sonnet. "
@@ -567,7 +564,7 @@ def page_learnings():
     with col_a:
         if st.button("🔄 Regénérer maintenant (~$0.10)", key="regen_learnings"):
             with st.spinner("Analyse Claude Sonnet en cours..."):
-                from weekly_report import generate_learnings
+                from weekly_report import generate_learnings  # noqa: PLC0415
                 try:
                     new_data = generate_learnings(days=28)
                     if new_data:
@@ -587,17 +584,17 @@ def page_learnings():
         st.json(data)
 
 
-def page_approbation():
+def page_approbation():  # noqa: PLR0912, PLR0915
     st.title("✅ Approbation du draft")
 
     if not PENDING_DRAFT.exists():
         st.info("Aucun draft en attente. Le pipeline génère à 09h00 (mar/mer/jeu).")
         if st.button("🚀 Générer un post maintenant", type="primary"):
             with st.spinner("Sélection de l'article (08h00)…"):
-                r1 = subprocess.run(
-                    ["bash", str(_PIPELINE_SH), "--select-only"],
+                r1 = subprocess.run(  # noqa: S603
+                    ["bash", str(_PIPELINE_SH), "--select-only"],  # noqa: S607
                     capture_output=True, text=True, timeout=120,
-                    cwd=str(_PIPELINE_SH.parent),
+                    cwd=str(_PIPELINE_SH.parent), check=False,
                 )
             if r1.returncode != 0:
                 st.error("Échec --select-only")
@@ -607,10 +604,10 @@ def page_approbation():
                 st.warning("Aucun article pertinent trouvé dans les flux RSS aujourd'hui.")
                 return
             with st.spinner("Génération du post (~2 min)…"):
-                r2 = subprocess.run(
-                    ["bash", str(_PIPELINE_SH), "--draft"],
+                r2 = subprocess.run(  # noqa: S603
+                    ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
                     capture_output=True, text=True, timeout=300,
-                    cwd=str(_PIPELINE_SH.parent),
+                    cwd=str(_PIPELINE_SH.parent), check=False,
                 )
             if r2.returncode == 0:
                 st.success("Draft prêt.")
@@ -637,10 +634,9 @@ def page_approbation():
             if st.button("↩️ Annuler l'approbation", type="secondary"):
                 APPROVED_FLAG.unlink(missing_ok=True)
                 st.rerun()
-        else:
-            if st.button("✅ Approuver", type="primary", use_container_width=True):
-                APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
-                st.rerun()
+        elif st.button("✅ Approuver", type="primary", use_container_width=True):
+            APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
+            st.rerun()
     with col2:
         if st.button("🔄 Régénérer", type="secondary", use_container_width=True, disabled=approved):
             post_dir = Path(draft.get("post_dir", ""))
@@ -648,13 +644,12 @@ def page_approbation():
             if news_src.exists():
                 PENDING_DRAFT.unlink(missing_ok=True)
                 APPROVED_FLAG.unlink(missing_ok=True)
-                import shutil
                 shutil.copy(news_src, PENDING_ARTICLE)
                 with st.spinner("Régénération en cours (~2 min)…"):
-                    result = subprocess.run(
-                        ["bash", str(_PIPELINE_SH), "--draft"],
+                    result = subprocess.run(  # noqa: S603
+                        ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
                         capture_output=True, text=True, timeout=300,
-                        cwd=str(_PIPELINE_SH.parent),
+                        cwd=str(_PIPELINE_SH.parent), check=False,
                     )
                 if result.returncode == 0:
                     st.success("Nouveau draft prêt.")

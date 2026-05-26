@@ -166,7 +166,7 @@ def init_db():
         for stmt in SCHEMA:
             conn.execute(stmt)
         for stmt in _MIGRATIONS:
-            try:
+            try:  # noqa: SIM105
                 conn.execute(stmt)
             except sqlite3.OperationalError:
                 pass  # colonne déjà présente
