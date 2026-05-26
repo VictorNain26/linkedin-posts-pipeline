@@ -161,7 +161,7 @@ def _create_post(payload: dict, token: str) -> str:
 # ──────────────────────────────────────────────────────────────
 # Public API — 3 formats
 # ──────────────────────────────────────────────────────────────
-def post_document_carousel(post_text: str, pdf_path: str, dry_run: bool = False) -> str:
+def post_document_carousel(post_text: str, pdf_path: str, dry_run: bool = False, title: str = "") -> str:
     token = _get_required("LI_ACCESS_TOKEN")
     person_urn = _get_required("LI_PERSON_URN")
 
@@ -176,7 +176,10 @@ def post_document_carousel(post_text: str, pdf_path: str, dry_run: bool = False)
     time.sleep(2)  # let LinkedIn finalize the asset
 
     payload = _build_base_payload(person_urn, post_text)
-    payload["content"] = {"media": {"id": document_urn}}
+    media: dict = {"id": document_urn}
+    if title:
+        media["title"] = title[:200]
+    payload["content"] = {"media": media}
     return _create_post(payload, token)
 
 
@@ -248,6 +251,14 @@ def post_first_comment(parent_post_urn: str, comment_text: str, dry_run: bool = 
         "message": {"text": comment_text},
     }
     resp = _request_with_retry("POST", url, headers=_headers(token), json=payload)
+    if resp.status_code == 403:
+        # LinkedIn API 202605+ exige partnerApiSocialActions.CREATE — non inclus dans w_member_social.
+        # On log un avertissement sans faire échouer le pipeline : le post est déjà publié.
+        print(
+            f"[linkedin] WARN: comment skipped (403 — scope insuffisant: {resp.text[:200]})",
+            file=sys.stderr,
+        )
+        return ""
     resp.raise_for_status()
     comment_urn = resp.headers.get("x-restli-id") or resp.json().get("$URN", "")
     if not comment_urn:

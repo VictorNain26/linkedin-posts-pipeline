@@ -507,10 +507,11 @@ from linkedin_post import post_document_carousel, post_text_only
 post_dir = pathlib.Path(os.environ["POST_DIR_ENV"])
 data = json.load(open(post_dir / "result.json"))
 text = (post_dir / "post.txt").read_text(encoding="utf-8")
+title = data.get("topic", "")[:200]
 
 fmt = data["format"]
 if fmt == FORMAT_CAROUSEL:
-    pid = post_document_carousel(text, str(post_dir / "carousel.pdf"))
+    pid = post_document_carousel(text, str(post_dir / "carousel.pdf"), title=title)
 elif fmt == FORMAT_TEXT:
     pid = post_text_only(text)
 else:
