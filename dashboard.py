@@ -50,6 +50,7 @@ def _safe_upload_path(upload_dir: Path, raw_filename: str) -> Path:
         raise ValueError(f"path escapes upload dir: {raw_filename!r} → {candidate}") from e
     return candidate
 
+
 from config import DB_PATH, LEARNINGS_PATH, OUTPUT_DIR, STATE_DIR  # noqa: E402
 
 PENDING_DRAFT = STATE_DIR / "pending_draft.json"
@@ -88,6 +89,7 @@ def set_paused(reason: str = "") -> None:
 
 def set_resumed() -> None:
     PAUSE_FLAG.unlink(missing_ok=True)
+
 
 # DB queries + filesystem helpers extraits dans dashboard_queries.py (R6)
 from dashboard_queries import (  # noqa: E402
@@ -143,7 +145,7 @@ def render_post(row: pd.Series) -> None:  # noqa: PLR0912
                 cols = st.columns(min(len(pages), 3))
                 for i, img in enumerate(pages):
                     with cols[i % len(cols)]:
-                        st.image(img, caption=f"Slide {i+1}", use_container_width=True)
+                        st.image(img, caption=f"Slide {i + 1}", use_container_width=True)
                 with pdf_path.open("rb") as f:
                     st.download_button(
                         "⬇️ Télécharger le PDF",
@@ -229,6 +231,7 @@ def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
             if st.button("🔄 Générer maintenant (~$0.10)", key="gen_learnings_empty"):
                 with st.spinner("Claude Sonnet analyse..."):
                     from weekly_report import generate_learnings  # noqa: PLC0415
+
                     try:
                         new_data = generate_learnings(days=28)
                         if new_data:
@@ -259,6 +262,7 @@ def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
         if st.button("🔄 Regénérer (~$0.10)", key="regen_learnings_section", use_container_width=True):
             with st.spinner("Claude Sonnet analyse..."):
                 from weekly_report import generate_learnings  # noqa: PLC0415
+
                 try:
                     new_data = generate_learnings(days=28)
                     if new_data:
@@ -350,7 +354,8 @@ def page_analytics():  # noqa: PLR0912, PLR0915
             """SELECT date, new_followers, total_followers
                FROM follower_growth WHERE date > date('now', ? || ' days')
                ORDER BY date""",
-            conn, params=(f"-{days}",),
+            conn,
+            params=(f"-{days}",),
         )
 
     st.header(f"📈 Performance — {days} derniers jours")
@@ -371,7 +376,11 @@ def page_analytics():  # noqa: PLR0912, PLR0915
         # 3 KPIs croissance abonnés (si data dispo)
         if not growth.empty:
             growth["date"] = pd.to_datetime(growth["date"])
-            last_total = growth["total_followers"].dropna().iloc[-1] if growth["total_followers"].notna().any() else None
+            last_total = (
+                growth["total_followers"].dropna().iloc[-1]
+                if growth["total_followers"].notna().any()
+                else None
+            )
             k1, k2, k3 = st.columns(3)
             k1.metric("Total abonnés", f"{int(last_total)}" if last_total else "—")
             k2.metric(f"Nouveaux sur {days}j", int(growth["new_followers"].sum()))
@@ -392,7 +401,8 @@ def page_analytics():  # noqa: PLR0912, PLR0915
             demo = pd.read_sql_query(
                 """SELECT dimension, value, percentage FROM audience_snapshot
                    WHERE snapshot_at = ? ORDER BY dimension, percentage DESC""",
-                conn, params=(last_ts,),
+                conn,
+                params=(last_ts,),
             )
         dimensions = demo["dimension"].unique().tolist()
         cols = st.columns(min(len(dimensions), 3) or 1)
@@ -438,7 +448,9 @@ def page_analytics():  # noqa: PLR0912, PLR0915
         if formula.empty:
             st.caption("Pas de data — il faut posts publiés + analytics importés.")
         else:
-            tab_pick, tab_impr, tab_inter = st.tabs(["# de fois gagnante", "Impressions moy.", "Interactions moy."])
+            tab_pick, tab_impr, tab_inter = st.tabs(
+                ["# de fois gagnante", "Impressions moy.", "Interactions moy."]
+            )
             with tab_pick:
                 st.bar_chart(formula.set_index("formula")["picked_count"])
             with tab_impr:
@@ -483,6 +495,7 @@ def page_analytics():  # noqa: PLR0912, PLR0915
 
             try:
                 from import_analytics_csv import import_csv as run_import  # noqa: PLC0415
+
                 with st.spinner("Import en cours..."):
                     summary = run_import(saved_path)
                 cols = st.columns(4)
@@ -565,6 +578,7 @@ def page_learnings():  # noqa: PLR0915
         if st.button("🔄 Regénérer maintenant (~$0.10)", key="regen_learnings"):
             with st.spinner("Analyse Claude Sonnet en cours..."):
                 from weekly_report import generate_learnings  # noqa: PLC0415
+
                 try:
                     new_data = generate_learnings(days=28)
                     if new_data:
@@ -593,8 +607,11 @@ def page_approbation():  # noqa: PLR0912, PLR0915
             with st.spinner("Sélection de l'article (08h00)…"):
                 r1 = subprocess.run(  # noqa: S603
                     ["bash", str(_PIPELINE_SH), "--select-only"],  # noqa: S607
-                    capture_output=True, text=True, timeout=120,
-                    cwd=str(_PIPELINE_SH.parent), check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(_PIPELINE_SH.parent),
+                    check=False,
                 )
             if r1.returncode != 0:
                 st.error("Échec --select-only")
@@ -606,8 +623,11 @@ def page_approbation():  # noqa: PLR0912, PLR0915
             with st.spinner("Génération du post (~2 min)…"):
                 r2 = subprocess.run(  # noqa: S603
                     ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
-                    capture_output=True, text=True, timeout=300,
-                    cwd=str(_PIPELINE_SH.parent), check=False,
+                    capture_output=True,
+                    text=True,
+                    timeout=300,
+                    cwd=str(_PIPELINE_SH.parent),
+                    check=False,
                 )
             if r2.returncode == 0:
                 st.success("Draft prêt.")
@@ -648,8 +668,11 @@ def page_approbation():  # noqa: PLR0912, PLR0915
                 with st.spinner("Régénération en cours (~2 min)…"):
                     result = subprocess.run(  # noqa: S603
                         ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
-                        capture_output=True, text=True, timeout=300,
-                        cwd=str(_PIPELINE_SH.parent), check=False,
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        cwd=str(_PIPELINE_SH.parent),
+                        check=False,
                     )
                 if result.returncode == 0:
                     st.success("Nouveau draft prêt.")
@@ -676,7 +699,7 @@ def page_approbation():  # noqa: PLR0912, PLR0915
     if slides:
         with st.expander(f"🎞️ Slides ({len(slides)})", expanded=True):
             for i, slide in enumerate(slides):
-                st.markdown(f"**Slide {i+1}** — {slide.get('main', '')}")
+                st.markdown(f"**Slide {i + 1}** — {slide.get('main', '')}")
                 if slide.get("sub"):
                     st.caption(slide["sub"])
 

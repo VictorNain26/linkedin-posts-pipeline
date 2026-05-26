@@ -328,7 +328,9 @@ def system_voice(model: str | None = None) -> list[dict]:
         + "\n</anti_ai_patterns>"
     )
     if model == HAIKU_MODEL:
-        return [{"type": "text", "text": b1 + "\n\n" + b2 + "\n\n" + b3, "cache_control": {"type": "ephemeral"}}]
+        return [
+            {"type": "text", "text": b1 + "\n\n" + b2 + "\n\n" + b3, "cache_control": {"type": "ephemeral"}}
+        ]
     return [
         {"type": "text", "text": b1, "cache_control": {"type": "ephemeral"}},
         {"type": "text", "text": b2, "cache_control": {"type": "ephemeral"}},

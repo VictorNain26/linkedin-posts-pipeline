@@ -73,4 +73,5 @@ def test_audience_snapshot_wipe_on_resnapshot(tmp_data_dir):
 
 def test_latest_audience_snapshot_empty(tmp_data_dir):
     from history import latest_audience_snapshot
+
     assert latest_audience_snapshot() == {}

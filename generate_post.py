@@ -60,9 +60,16 @@ from history import keyword_overlap_ratio
 
 # Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
 __all__ = [
-    "ANGLE_TOOL", "CTA_COMMENT_TOOL", "FACTUAL_CHECK_TOOL", "HOOK_JUDGE_TOOL",
-    "HOOK_VARIANTS_TOOL", "PAIN_TOOL", "SLIDES_TOOL", "VIOLATIONS_TOOL",
-    "_load_learnings_block", "_system_with_learnings",
+    "ANGLE_TOOL",
+    "CTA_COMMENT_TOOL",
+    "FACTUAL_CHECK_TOOL",
+    "HOOK_JUDGE_TOOL",
+    "HOOK_VARIANTS_TOOL",
+    "PAIN_TOOL",
+    "SLIDES_TOOL",
+    "VIOLATIONS_TOOL",
+    "_load_learnings_block",
+    "_system_with_learnings",
 ]
 
 
@@ -98,9 +105,7 @@ def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
         system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            "<pains_identified>\n"
-            + "\n".join(f"- {p}" for p in pains)
-            + "\n</pains_identified>\n\n"
+            "<pains_identified>\n" + "\n".join(f"- {p}" for p in pains) + "\n</pains_identified>\n\n"
             "<task>\n"
             "Trouve l'angle éditorial UNIQUE de ce post pour la cible PME/CTO non-tech.\n"
             "L'angle doit faire 3 choses simultanément :\n"
@@ -114,11 +119,11 @@ def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
             "Le PDG d'usine 50 personnes doit reconnaître SA douleur dans ton angle.\n"
             "</critical>\n\n"
             "<bad_examples>\n"
-            "<bad_angle>\"OpenAI lance Codex. Il automatise la production de code.\"</bad_angle>\n"
+            '<bad_angle>"OpenAI lance Codex. Il automatise la production de code."</bad_angle>\n'
             "  → Reste tech, ne parle d'aucune douleur business.\n"
-            "<bad_angle>\"Les meilleurs devs adoptent Codex. Pas les autres.\"</bad_angle>\n"
+            '<bad_angle>"Les meilleurs devs adoptent Codex. Pas les autres."</bad_angle>\n'
             "  → Touche les devs, pas le décideur PME non-tech.\n"
-            "<bad_angle>\"L'IA va remplacer 30% des développeurs.\"</bad_angle>\n"
+            '<bad_angle>"L\'IA va remplacer 30% des développeurs."</bad_angle>\n'
             "  → Prédiction non sourcée + clivant sans valeur ajoutée.\n"
             "</bad_examples>\n\n"
             "<good_examples>\n"
@@ -131,7 +136,7 @@ def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
             "</good_examples>\n\n"
             "<hook_visual_constraints>\n"
             "Hook slide 1 : 1 phrase MAX 8 mots, percutante, vue mobile.\n"
-            "- Interpelle le décideur directement (\"Tu\", \"Ton\", verbe d'action)\n"
+            '- Interpelle le décideur directement ("Tu", "Ton", verbe d\'action)\n'
             "- N'inclut PAS le nom de Victor\n"
             "- N'inclut PAS de jargon tech non traduit\n"
             "</hook_visual_constraints>"
@@ -177,13 +182,13 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
             "- Chiffres uniquement si présents dans l'article source. Jamais inventés.\n"
             "</slide_rules>\n\n"
             "<bad_examples>\n"
-            "<bad_slide>\"L'IA va révolutionner ton business !\" (cliché vide, pas de fact ancré)</bad_slide>\n"
-            "<bad_slide>\"73% des PME perdent 4h/semaine\" (chiffre fabriqué non sourcé article)</bad_slide>\n"
-            "<bad_slide>\"Mardi dernier, j'ai vu un client...\" (anecdote inventée)</bad_slide>\n"
+            '<bad_slide>"L\'IA va révolutionner ton business !" (cliché vide, pas de fact ancré)</bad_slide>\n'
+            '<bad_slide>"73% des PME perdent 4h/semaine" (chiffre fabriqué non sourcé article)</bad_slide>\n'
+            '<bad_slide>"Mardi dernier, j\'ai vu un client..." (anecdote inventée)</bad_slide>\n'
             "</bad_examples>\n\n"
             "<good_examples>\n"
-            "<good_slide>main: \"La CNIL contrôle les pratiques, pas les intentions.\" sub: \"Bug fournisseur, erreur de config : peu importe. Ton périmètre, tes données.\"</good_slide>\n"
-            "<good_slide>main: \"3 questions à poser avant de signer.\" sub: \"Qui est responsable de traitement ? Où vont les données ? Qui prévient la CNIL ?\"</good_slide>\n"
+            '<good_slide>main: "La CNIL contrôle les pratiques, pas les intentions." sub: "Bug fournisseur, erreur de config : peu importe. Ton périmètre, tes données."</good_slide>\n'
+            '<good_slide>main: "3 questions à poser avant de signer." sub: "Qui est responsable de traitement ? Où vont les données ? Qui prévient la CNIL ?"</good_slide>\n'
             "</good_examples>"
         ),
         tool=SLIDES_TOOL,
@@ -215,22 +220,22 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
             "<modify>\n"
             "- Phrasé pour matcher la voix orale courte de Victor\n"
             "- Casser les phrases trop longues en 2 phrases courtes\n"
-            "- Remplacer le formel par l'oral (\"il faut\" → \"tu dois\", etc.)\n"
+            '- Remplacer le formel par l\'oral ("il faut" → "tu dois", etc.)\n'
             "- Appliquer les règles de syntaxe FR native (<french_syntax_rules>)\n"
             "</modify>\n\n"
             "<forbidden>\n"
             "- AJOUTER chiffres, anecdotes, situations non présents dans l'outline ou l'article\n"
-            "- Inventer des détails pour rendre \"plus crédible\"\n"
+            '- Inventer des détails pour rendre "plus crédible"\n'
             "- Introduire des buzzwords ou patterns AI (cf. system)\n"
             "</forbidden>\n\n"
             "<rewrite_examples>\n"
             "<example>\n"
-            "  before: \"Il est nécessaire d'évaluer méticuleusement les risques avant le déploiement.\"\n"
-            "  after: \"Évalue les risques avant de déployer. C'est pas négociable.\"\n"
+            '  before: "Il est nécessaire d\'évaluer méticuleusement les risques avant le déploiement."\n'
+            '  after: "Évalue les risques avant de déployer. C\'est pas négociable."\n'
             "</example>\n"
             "<example>\n"
-            "  before: \"Les organisations doivent prendre en considération la conformité RGPD.\"\n"
-            "  after: \"La conformité RGPD, tu la gères en amont. Pas après.\"\n"
+            '  before: "Les organisations doivent prendre en considération la conformité RGPD."\n'
+            '  after: "La conformité RGPD, tu la gères en amont. Pas après."\n'
             "</example>\n"
             "</rewrite_examples>\n\n"
             "<outline_to_rewrite>\n" + outline_str + "\n</outline_to_rewrite>"
@@ -250,23 +255,23 @@ def _detect_violations(slides: list[dict]) -> list[str]:
 def _detect_semantic_violations(slides: list[dict]) -> list[str]:
     """Détection sémantique des clichés IA via Haiku — capture les variants non couverts
     par le string matching (ex : 'dans un monde en pleine transformation')."""
-    text = "\n".join(
-        f"S{i+1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides)
-    )
+    text = "\n".join(f"S{i + 1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides))
     out = call_tool(
         model=HAIKU_MODEL,
-        system=[{
-            "type": "text",
-            "text": (
-                "Tu identifies les clichés de texte généré par IA dans un post LinkedIn business. "
-                "Exemples de patterns à détecter : prophéties vagues ('l'IA va révolutionner'), "
-                "superlatifs sans preuve ('incroyable', 'majeur'), révolutions annoncées, "
-                "formules creuses ('dans un monde en constante/pleine évolution/transformation'), "
-                "phrases d'experts pompiers sans ancrage factuel. "
-                "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits."
-            ),
-            "cache_control": {"type": "ephemeral"},
-        }],
+        system=[
+            {
+                "type": "text",
+                "text": (
+                    "Tu identifies les clichés de texte généré par IA dans un post LinkedIn business. "
+                    "Exemples de patterns à détecter : prophéties vagues ('l'IA va révolutionner'), "
+                    "superlatifs sans preuve ('incroyable', 'majeur'), révolutions annoncées, "
+                    "formules creuses ('dans un monde en constante/pleine évolution/transformation'), "
+                    "phrases d'experts pompiers sans ancrage factuel. "
+                    "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits."
+                ),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         user_text=(
             "<slides>\n" + text + "\n</slides>\n\n"
             "<task>Si aucun cliché IA : clean=true, violations=[]. "
@@ -320,23 +325,23 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
     """Cross-check faits/chiffres des slides vs article source (Haiku).
     Détecte les affirmations inventées ou extrapolées non présentes dans l'article.
     Si violations trouvées : Sonnet réécrit les slides fautives (1 tentative)."""
-    slides_text = "\n".join(
-        f"S{i+1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides)
-    )
+    slides_text = "\n".join(f"S{i + 1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides))
     article_ctx_short = article_ctx[:1500] + ("…" if len(article_ctx) > 1500 else "")
     out = call_tool(
         model=HAIKU_MODEL,
-        system=[{
-            "type": "text",
-            "text": (
-                "Tu vérifies la cohérence factuelle entre un article source et des slides LinkedIn. "
-                "Ton rôle : détecter les chiffres, affirmations ou faits dans les slides "
-                "qui ne peuvent PAS être tracés à l'article. "
-                "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
-                "seuls les faits inventés sont des violations."
-            ),
-            "cache_control": {"type": "ephemeral"},
-        }],
+        system=[
+            {
+                "type": "text",
+                "text": (
+                    "Tu vérifies la cohérence factuelle entre un article source et des slides LinkedIn. "
+                    "Ton rôle : détecter les chiffres, affirmations ou faits dans les slides "
+                    "qui ne peuvent PAS être tracés à l'article. "
+                    "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
+                    "seuls les faits inventés sont des violations."
+                ),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
         user_text=(
             f"{article_ctx_short}\n\n"
             "<slides_to_verify>\n" + slides_text + "\n</slides_to_verify>\n\n"
@@ -408,26 +413,26 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
             "  Relis chaque hook à voix haute — s'il sonne traduit d'anglais, réécris.\n"
             "</constraints_per_hook>\n\n"
             "<formulas>\n\n"
-            "<formula name=\"contrarian\">\n"
+            '<formula name="contrarian">\n'
             "Challenge une idée reçue du marché ou contredit ce que l'article suggère.\n"
             "<good_example>\"Tout le monde court chercher 'le meilleur LLM'. Le vrai problème est ailleurs.\"</good_example>\n"
             "<good_example>\"Un label 'leader Gartner' ne paye pas ta facture d'API. Ce qui change la donne :\"</good_example>\n"
-            "<bad_example>\"Voici la dure réalité de l'IA en entreprise.\" (cliché vide, autoritaire)</bad_example>\n"
-            "<bad_example>\"L'IA va TOUT changer.\" (banale, pas de contrarian réel)</bad_example>\n"
+            '<bad_example>"Voici la dure réalité de l\'IA en entreprise." (cliché vide, autoritaire)</bad_example>\n'
+            '<bad_example>"L\'IA va TOUT changer." (banale, pas de contrarian réel)</bad_example>\n'
             "</formula>\n\n"
-            "<formula name=\"data\">\n"
+            '<formula name="data">\n'
             "Cite UN chiffre PRÉSENT dans l'article + son implication business.\n"
             "Si l'article n'a aucun chiffre exploitable, n'utilise PAS cette formule. Mieux vaut un\n"
             "doublon contrarian que d'inventer un '73%' ou un 'McKinsey'.\n"
-            "<good_example>\"Gartner classe OpenAI Leader 2026 en agents coding. Ça ne te dit rien sur ton prix final.\"</good_example>\n"
-            "<good_example>\"30% de gain de productivité chez Virgin Atlantic avec Codex. Reproductible chez toi ?\"</good_example>\n"
+            '<good_example>"Gartner classe OpenAI Leader 2026 en agents coding. Ça ne te dit rien sur ton prix final."</good_example>\n'
+            '<good_example>"30% de gain de productivité chez Virgin Atlantic avec Codex. Reproductible chez toi ?"</good_example>\n'
             "<bad_example>\"73% des PME passent à l'IA en 2026.\" (chiffre fabriqué, source pas dans l'article)</bad_example>\n"
             "</formula>\n\n"
-            "<formula name=\"prospect_question\">\n"
+            '<formula name="prospect_question">\n'
             "Pose une question qui résonne avec UNE douleur précise de la cible.\n"
-            "<good_example>\"Tu paies déjà ton abonnement Copilot. Tu sais ce que tu y gagnes vraiment ?\"</good_example>\n"
-            "<good_example>\"Tu veux brancher l'IA dans tes process. Qui pilote ça en interne ?\"</good_example>\n"
-            "<bad_example>\"Vous voulez gagner du temps avec l'IA ?\" (question vide, banale)</bad_example>\n"
+            '<good_example>"Tu paies déjà ton abonnement Copilot. Tu sais ce que tu y gagnes vraiment ?"</good_example>\n'
+            '<good_example>"Tu veux brancher l\'IA dans tes process. Qui pilote ça en interne ?"</good_example>\n'
+            '<bad_example>"Vous voulez gagner du temps avec l\'IA ?" (question vide, banale)</bad_example>\n'
             "<bad_example>\"L'IA pour ta PME, ça t'intéresse ?\" (yes/no fermé, aucune accroche)</bad_example>\n"
             "</formula>\n\n"
             "</formulas>"
@@ -460,24 +465,24 @@ def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
             "3. PARLE AU LECTEUR : pas d'anecdote perso fictive (\"Mardi dernier j'ai…\") → RECALE\n"
             "4. TIENT SA PROMESSE : pas de clickbait — le post doit livrer ce que le hook teaste (algo 2026 pénalise)\n"
             "5. MATCH AUDIENCE NON-TECH : si jargon technique pas traduit → score plus bas\n"
-            "6. SYNTAXE FR NATIVE : un calque type \"mal configure\", \"bien utilise\" → RECALE\n"
+            '6. SYNTAXE FR NATIVE : un calque type "mal configure", "bien utilise" → RECALE\n'
             "</criteria>\n\n"
             "<judgement_examples>\n"
             "<example>\n"
             "  variants:\n"
-            "    [contrarian] \"L'IA va TOUT changer en 2026.\" (banal)\n"
-            "    [data] \"73% des PME utilisent l'IA.\" (chiffre fabriqué)\n"
-            "    [prospect_question] \"Tu paies déjà ton outil IA. Tu sais combien il te coûte vraiment ?\"\n"
+            '    [contrarian] "L\'IA va TOUT changer en 2026." (banal)\n'
+            '    [data] "73% des PME utilisent l\'IA." (chiffre fabriqué)\n'
+            '    [prospect_question] "Tu paies déjà ton outil IA. Tu sais combien il te coûte vraiment ?"\n'
             "  winner: prospect_question\n"
-            "  reason: \"Seul à toucher une douleur PME précise (coût caché). Les 2 autres : 1 banal, 1 chiffre fabriqué.\"\n"
+            '  reason: "Seul à toucher une douleur PME précise (coût caché). Les 2 autres : 1 banal, 1 chiffre fabriqué."\n'
             "</example>\n"
             "<example>\n"
             "  variants:\n"
-            "    [contrarian] \"Tu cherches le meilleur LLM. Le vrai problème est ailleurs.\"\n"
-            "    [data] \"Anthropic vient de sortir Claude 5. 60% plus rapide selon eux.\"\n"
-            "    [prospect_question] \"Tu hésites entre Claude et GPT ?\"\n"
+            '    [contrarian] "Tu cherches le meilleur LLM. Le vrai problème est ailleurs."\n'
+            '    [data] "Anthropic vient de sortir Claude 5. 60% plus rapide selon eux."\n'
+            '    [prospect_question] "Tu hésites entre Claude et GPT ?"\n'
             "  winner: contrarian\n"
-            "  reason: \"Contrarian le plus actionnable. Le data est anecdotique (perf, pas business). Le question est trop tech.\"\n"
+            '  reason: "Contrarian le plus actionnable. Le data est anecdotique (perf, pas business). Le question est trop tech."\n'
             "</example>\n"
             "</judgement_examples>"
         ),
@@ -508,38 +513,38 @@ def agent8_cta_comment(topic: str, angle: dict) -> str:
             "C'est un CTA DIRECT vers une action — pas une question d'engagement.\n"
             "Objectif : faire passer le prospect de la lecture à l'action (DM).\n"
             "</task>\n\n"
-            "<format length=\"200-400 chars\">\n"
+            '<format length="200-400 chars">\n'
             "1. UNE phrase de transition courte ancrée sur le sujet du post (1 ligne)\n"
             "2. LE CTA explicite : audit gratuit / appel découverte / sparring 30min / autre\n"
             "3. LE LIVRABLE TANGIBLE : ce que le prospect repart AVEC, concrètement\n"
-            "4. CANAL : \"DM ouvert\" (aucun lien externe)\n"
+            '4. CANAL : "DM ouvert" (aucun lien externe)\n'
             "</format>\n\n"
-            "<rule name=\"livrable-obligatoire\">\n"
+            '<rule name="livrable-obligatoire">\n'
             "Un livrable doit être NOMMÉ et CONCRET. Si tu ne peux pas le nommer, reformule le CTA.\n"
-            "<good_livrable>\"une feuille de route chiffrée\"</good_livrable>\n"
-            "<good_livrable>\"une short-list de 3 cas d'usage prioritaires\"</good_livrable>\n"
-            "<good_livrable>\"une grille de risques sur ta stack actuelle\"</good_livrable>\n"
-            "<good_livrable>\"un plan d'action 30/60/90 jours\"</good_livrable>\n"
-            "<bad_livrable>\"on discute\"</bad_livrable>\n"
-            "<bad_livrable>\"on regarde ensemble\"</bad_livrable>\n"
-            "<bad_livrable>\"on échange sur ton cas\"</bad_livrable>\n"
+            '<good_livrable>"une feuille de route chiffrée"</good_livrable>\n'
+            '<good_livrable>"une short-list de 3 cas d\'usage prioritaires"</good_livrable>\n'
+            '<good_livrable>"une grille de risques sur ta stack actuelle"</good_livrable>\n'
+            '<good_livrable>"un plan d\'action 30/60/90 jours"</good_livrable>\n'
+            '<bad_livrable>"on discute"</bad_livrable>\n'
+            '<bad_livrable>"on regarde ensemble"</bad_livrable>\n'
+            '<bad_livrable>"on échange sur ton cas"</bad_livrable>\n'
             "</rule>\n\n"
-            "<rule name=\"no-link\" priority=\"critical\">\n"
+            '<rule name="no-link" priority="critical">\n'
             "AUCUN lien dans le commentaire. AUCUNE URL. AUCUNE mention de site web (victorlenain.fr inclus).\n"
             "LinkedIn pénalise -80% la visibilité des commentaires contenant un lien externe en 2026.\n"
-            "Seul canal autorisé : \"DM ouvert\".\n"
+            'Seul canal autorisé : "DM ouvert".\n'
             "</rule>\n\n"
             "<bad_examples>\n"
-            "<bad>\"N'hésite pas à me contacter pour en discuter !\" (vague, pas de livrable)</bad>\n"
-            "<bad>\"Plus d'infos sur victorlenain.fr 👉\" (lien externe → -80% visibilité)</bad>\n"
-            "<bad>\"DM moi pour qu'on en parle\" (verbe vague, pas de livrable nommé)</bad>\n"
+            '<bad>"N\'hésite pas à me contacter pour en discuter !" (vague, pas de livrable)</bad>\n'
+            '<bad>"Plus d\'infos sur victorlenain.fr 👉" (lien externe → -80% visibilité)</bad>\n'
+            '<bad>"DM moi pour qu\'on en parle" (verbe vague, pas de livrable nommé)</bad>\n'
             "</bad_examples>\n\n"
             "<good_examples>\n"
-            "<good>\"L'IA pour PME ça commence par savoir quoi automatiser. Si tu veux clarifier ça pour ton entreprise : 30min en DM. Tu repars avec une short-list de 3 cas prioritaires et un coût ordre de grandeur. DM ouvert.\"</good>\n"
+            '<good>"L\'IA pour PME ça commence par savoir quoi automatiser. Si tu veux clarifier ça pour ton entreprise : 30min en DM. Tu repars avec une short-list de 3 cas prioritaires et un coût ordre de grandeur. DM ouvert."</good>\n'
             "<good>\"Le 'leader Gartner' ne te dit pas combien tu vas payer. Mon audit 30min gratuit te donne une grille de coût réel sur ta stack + un plan de migration sans lock-in. DM ouvert.\"</good>\n"
             "</good_examples>\n\n"
             "<voice>\n"
-            "Direct, oral, voix Victor. Pas vendeur agressif. Pas de \"Hello !\". Pas de 🚀.\n"
+            'Direct, oral, voix Victor. Pas vendeur agressif. Pas de "Hello !". Pas de 🚀.\n'
             "</voice>"
         ),
         tool=CTA_COMMENT_TOOL,

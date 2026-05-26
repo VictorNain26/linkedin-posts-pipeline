@@ -43,11 +43,13 @@ def tmp_data_dir(tmp_path, monkeypatch):
     # (sinon ils gardent la référence à l'ancienne valeur avant monkeypatch)
     try:
         import agents.system
+
         importlib.reload(agents.system)
     except ImportError:
         pass
     try:
         import import_analytics_csv
+
         importlib.reload(import_analytics_csv)
     except ImportError:
         pass

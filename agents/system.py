@@ -57,8 +57,7 @@ def _load_learnings_block() -> dict | None:
     lines.append("<biases_to_apply>")
     for b in biases[:5]:  # safety cap
         lines.append(
-            f'  <bias type="{b.get("type", "?")}" key="{b.get("key", "?")}">'
-            f'{b.get("instruction", "")}</bias>'
+            f'  <bias type="{b.get("type", "?")}" key="{b.get("key", "?")}">{b.get("instruction", "")}</bias>'
         )
     lines.append("</biases_to_apply>")
     lines.append(

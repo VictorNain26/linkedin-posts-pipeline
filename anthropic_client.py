@@ -24,8 +24,8 @@ logger = get_logger(__name__)
 
 # Prix par million de tokens (USD) — Anthropic mai 2026
 _PRICING: dict[str, dict[str, float]] = {
-    "claude-sonnet-4-6":         {"in": 3.0,  "out": 15.0, "cache_write": 3.75, "cache_read": 0.30},
-    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.0,  "cache_write": 1.0,  "cache_read": 0.08},
+    "claude-sonnet-4-6": {"in": 3.0, "out": 15.0, "cache_write": 3.75, "cache_read": 0.30},
+    "claude-haiku-4-5-20251001": {"in": 0.80, "out": 4.0, "cache_write": 1.0, "cache_read": 0.08},
 }
 
 # Accumulateur par run (reset par reset_run_usage())
@@ -40,10 +40,10 @@ def get_run_cost_usd() -> float:
     total = 0.0
     for u in _run_usage:
         p = _PRICING.get(u["model"], _PRICING["claude-sonnet-4-6"])
-        total += u.get("input_tokens", 0)              * p["in"]          / 1_000_000
-        total += u.get("output_tokens", 0)             * p["out"]         / 1_000_000
+        total += u.get("input_tokens", 0) * p["in"] / 1_000_000
+        total += u.get("output_tokens", 0) * p["out"] / 1_000_000
         total += u.get("cache_creation_input_tokens", 0) * p["cache_write"] / 1_000_000
-        total += u.get("cache_read_input_tokens", 0)   * p["cache_read"]  / 1_000_000
+        total += u.get("cache_read_input_tokens", 0) * p["cache_read"] / 1_000_000
     return total
 
 
@@ -53,8 +53,8 @@ def get_run_usage_totals() -> dict:
     for u in _run_usage:
         total_in += u.get("input_tokens", 0)
         total_out += u.get("output_tokens", 0)
-        total_cw  += u.get("cache_creation_input_tokens", 0)
-        total_cr  += u.get("cache_read_input_tokens", 0)
+        total_cw += u.get("cache_creation_input_tokens", 0)
+        total_cr += u.get("cache_read_input_tokens", 0)
     return {
         "cost_usd": get_run_cost_usd(),
         "tokens_in": total_in,
@@ -105,24 +105,27 @@ def call_tool(
             entry = {
                 "model": model,
                 "tool": tool["name"],
-                "input_tokens":               getattr(u, "input_tokens", 0),
-                "output_tokens":              getattr(u, "output_tokens", 0),
+                "input_tokens": getattr(u, "input_tokens", 0),
+                "output_tokens": getattr(u, "output_tokens", 0),
                 "cache_creation_input_tokens": getattr(u, "cache_creation_input_tokens", 0) or 0,
-                "cache_read_input_tokens":     getattr(u, "cache_read_input_tokens", 0) or 0,
+                "cache_read_input_tokens": getattr(u, "cache_read_input_tokens", 0) or 0,
             }
             _run_usage.append(entry)
             p = _PRICING.get(model, _PRICING["claude-sonnet-4-6"])
             call_cost = (
-                entry["input_tokens"]               * p["in"]          / 1_000_000
-                + entry["output_tokens"]            * p["out"]         / 1_000_000
+                entry["input_tokens"] * p["in"] / 1_000_000
+                + entry["output_tokens"] * p["out"] / 1_000_000
                 + entry["cache_creation_input_tokens"] * p["cache_write"] / 1_000_000
-                + entry["cache_read_input_tokens"]  * p["cache_read"]  / 1_000_000
+                + entry["cache_read_input_tokens"] * p["cache_read"] / 1_000_000
             )
             logger.info(
                 "[cost] %-30s %-25s in=%d out=%d cw=%d cr=%d → $%.4f",
-                tool["name"], model,
-                entry["input_tokens"], entry["output_tokens"],
-                entry["cache_creation_input_tokens"], entry["cache_read_input_tokens"],
+                tool["name"],
+                model,
+                entry["input_tokens"],
+                entry["output_tokens"],
+                entry["cache_creation_input_tokens"],
+                entry["cache_read_input_tokens"],
                 call_cost,
             )
 
@@ -132,28 +135,28 @@ def call_tool(
             raise RuntimeError(f"Claude did not call tool '{tool['name']}' — got: {resp.content!r}")
         except RateLimitError as e:
             last_err = e
-            wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt) * 2
-            logger.warning(
-                "RateLimit attempt %d/%d, sleeping %ds", attempt + 1, ANTHROPIC_MAX_ATTEMPTS, wait
-            )
+            wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt) * 2
+            logger.warning("RateLimit attempt %d/%d, sleeping %ds", attempt + 1, ANTHROPIC_MAX_ATTEMPTS, wait)
             time.sleep(wait)
         except APIStatusError as e:
             last_err = e
             if e.status_code and 500 <= e.status_code < 600:
-                wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
+                wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt)
                 logger.warning(
                     "HTTP %d attempt %d/%d, sleeping %ds",
-                    e.status_code, attempt + 1, ANTHROPIC_MAX_ATTEMPTS, wait
+                    e.status_code,
+                    attempt + 1,
+                    ANTHROPIC_MAX_ATTEMPTS,
+                    wait,
                 )
                 time.sleep(wait)
             else:
                 raise
         except APIError as e:
             last_err = e
-            wait = ANTHROPIC_RETRY_BASE_DELAY * (2 ** attempt)
+            wait = ANTHROPIC_RETRY_BASE_DELAY * (2**attempt)
             logger.warning(
-                "APIError attempt %d/%d: %s, sleeping %ds",
-                attempt + 1, ANTHROPIC_MAX_ATTEMPTS, e, wait
+                "APIError attempt %d/%d: %s, sleeping %ds", attempt + 1, ANTHROPIC_MAX_ATTEMPTS, e, wait
             )
             time.sleep(wait)
     raise RuntimeError(f"Anthropic call_tool failed after {ANTHROPIC_MAX_ATTEMPTS} attempts: {last_err}")

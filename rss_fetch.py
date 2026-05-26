@@ -209,20 +209,20 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
         ],
         user_text=(
             "<scoring_rubric>\n\n"
-            "<tier score=\"8-10\" label=\"TRÈS PERTINENT\">\n"
+            '<tier score="8-10" label="TRÈS PERTINENT">\n'
             "- Conformité / régulation IA (CNIL, EU AI Act, RGPD + IA, certifications)\n"
             "- ROI / cas d'usage IA concret en entreprise AVEC chiffres ou bénéfices nommés\n"
             "- Annonces produit IA majeures (OpenAI, Anthropic, Mistral) MAIS uniquement si l'article expose des IMPLICATIONS business directes pour une PME (pas juste tech-product)\n"
             "- Adoption IA en PME française ou européenne, retours terrain\n"
             "- Risques IA pour les entreprises (sécu, lock-in, biais, dépendance fournisseur)\n"
             "</tier>\n\n"
-            "<tier score=\"5-7\" label=\"PERTINENT\">\n"
+            '<tier score="5-7" label="PERTINENT">\n'
             "- Annonces produit IA généralistes (besoin de pivot business par Victor pour activer)\n"
             "- Stratégie IA en entreprise (organisation, recrutement, gouvernance)\n"
             "- Comparaisons d'outils IA grand public\n"
             "- Études / rapports IA business (McKinsey, BCG, Gartner) si chiffres exploitables\n"
             "</tier>\n\n"
-            "<tier score=\"0-4\" label=\"PAS PERTINENT\">\n"
+            '<tier score="0-4" label="PAS PERTINENT">\n'
             "- Tech infrastructure pure (training, GPU clusters, fine-tuning) sans angle business\n"
             "- Recherche académique, benchmarks théoriques, papers sans application directe\n"
             "- Hardware (puces, datacenters)\n"
@@ -234,46 +234,45 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
             "</scoring_rubric>\n\n"
             "<critical_trap>\n"
             "Un article OpenAI/Anthropic n'est PAS automatiquement à 8-10. Test rapide :\n"
-            "\"Un dirigeant PME français non-tech peut-il tirer une décision concrète après lecture ?\"\n"
+            '"Un dirigeant PME français non-tech peut-il tirer une décision concrète après lecture ?"\n'
             "Si non → 5-7 max.\n"
             "</critical_trap>\n\n"
             "<calibration_examples>\n"
-            "<example score=\"9\">\n"
-            "  Titre: \"La CNIL publie ses recommandations sur l'IA générative pour les RH\"\n"
+            '<example score="9">\n'
+            '  Titre: "La CNIL publie ses recommandations sur l\'IA générative pour les RH"\n'
             "  → Conformité IA + cible RH PME directement. Décision claire après lecture.\n"
             "</example>\n"
-            "<example score=\"8\">\n"
-            "  Titre: \"L'EU AI Act entre en vigueur : ce que ça change pour les PME\"\n"
+            '<example score="8">\n'
+            '  Titre: "L\'EU AI Act entre en vigueur : ce que ça change pour les PME"\n'
             "  → Régulation impactant directement la cible. Très actionnable.\n"
             "</example>\n"
-            "<example score=\"7\">\n"
-            "  Titre: \"How Virgin Atlantic ships faster with Codex\"\n"
+            '<example score="7">\n'
+            '  Titre: "How Virgin Atlantic ships faster with Codex"\n'
             "  → Cas business avec ROI nommé mais cible Virgin = grande entreprise tech.\n"
-            "  Pivot possible vers PME (\"que peuvent en tirer les PME ?\").\n"
+            '  Pivot possible vers PME ("que peuvent en tirer les PME ?").\n'
             "</example>\n"
-            "<example score=\"6\">\n"
-            "  Titre: \"OpenAI named a Leader by Gartner in coding agents\"\n"
+            '<example score="6">\n'
+            '  Titre: "OpenAI named a Leader by Gartner in coding agents"\n'
             "  → Annonce produit nécessitant un pivot fort. Pas immédiatement actionnable.\n"
             "</example>\n"
-            "<example score=\"5\">\n"
-            "  Titre: \"Une startup française lève 50M pour son agent IA\"\n"
-            "  → Levée. Pivot possible (\"que faut-il regarder côté outils ?\") mais limité.\n"
+            '<example score="5">\n'
+            '  Titre: "Une startup française lève 50M pour son agent IA"\n'
+            '  → Levée. Pivot possible ("que faut-il regarder côté outils ?") mais limité.\n'
             "</example>\n"
-            "<example score=\"3\">\n"
-            "  Titre: \"OpenAI partners with Dell on hybrid Codex deployment\"\n"
+            '<example score="3">\n'
+            '  Titre: "OpenAI partners with Dell on hybrid Codex deployment"\n'
             "  → Partnership infra entre grandes boites. Pas pertinent PME.\n"
             "</example>\n"
-            "<example score=\"2\">\n"
-            "  Titre: \"An OpenAI model has disproved a discrete geometry conjecture\"\n"
+            '<example score="2">\n'
+            '  Titre: "An OpenAI model has disproved a discrete geometry conjecture"\n'
             "  → Recherche académique pure. Aucune décision PME possible.\n"
             "</example>\n"
-            "<example score=\"1\">\n"
-            "  Titre: \"Macron annonce une rallonge budgétaire pour la défense\"\n"
+            '<example score="1">\n'
+            '  Titre: "Macron annonce une rallonge budgétaire pour la défense"\n'
             "  → Hors scope IA business.\n"
             "</example>\n"
             "</calibration_examples>\n\n"
-            "<articles_to_score>\n"
-            + articles_str + "\n"
+            "<articles_to_score>\n" + articles_str + "\n"
             "</articles_to_score>\n\n"
             "Réponds 1 score par article, même ordre."
         ),

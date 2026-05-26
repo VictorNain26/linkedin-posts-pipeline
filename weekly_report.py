@@ -141,9 +141,13 @@ def _collect_data_for_analysis(days: int = 28) -> dict:
 
     posts = [
         {
-            "id": r[0], "date": r[1][:10], "format": r[2], "status": r[3],
+            "id": r[0],
+            "date": r[1][:10],
+            "format": r[2],
+            "status": r[3],
             "topic": (r[4] or "")[:120],
-            "impressions": r[5], "interactions": r[6],
+            "impressions": r[5],
+            "interactions": r[6],
         }
         for r in posts_rows
     ]
@@ -153,10 +157,7 @@ def _collect_data_for_analysis(days: int = 28) -> dict:
     # Top 3 par dimension
     demo_top = {dim: vals[:3] for dim, vals in demo.items()}
 
-    hook_stats = [
-        {"formula": r[0], "picked": r[1], "avg_impressions": int(r[2])}
-        for r in hooks_rows
-    ]
+    hook_stats = [{"formula": r[0], "picked": r[1], "avg_impressions": int(r[2])} for r in hooks_rows]
 
     return {
         "period_days": days,
@@ -210,9 +211,7 @@ def generate_learnings(days: int = 28) -> dict:
             "Cherche les PATTERNS non triviaux. Sois honnête : si rien d'actionnable ne ressort, "
             "renvoie biases=[] et recommendations=[].\n"
             "</critical>\n\n"
-            "<data_input>\n"
-            + data_json
-            + "\n</data_input>"
+            "<data_input>\n" + data_json + "\n</data_input>"
         ),
         tool=LEARNINGS_TOOL,
         max_tokens=2000,
@@ -236,7 +235,9 @@ def _render_learnings_section(learnings: dict) -> str:
         return "\n## 🧠 Analyse IA — Marketing Lead B2B\n\n_Pas assez de data publiée pour générer l'analyse (seuil min = 3 posts publiés)._\n"
 
     lines = ["\n## 🧠 Analyse IA — Marketing Lead B2B\n"]
-    lines.append(f"_Basée sur {learnings.get('based_on_posts', 0)} posts sur {learnings.get('based_on_period_days', 28)} jours_\n")
+    lines.append(
+        f"_Basée sur {learnings.get('based_on_posts', 0)} posts sur {learnings.get('based_on_period_days', 28)} jours_\n"
+    )
     lines.append(f"**Résumé** : {learnings.get('summary', '—')}\n")
 
     biases = learnings.get("biases", [])
@@ -245,9 +246,7 @@ def _render_learnings_section(learnings: dict) -> str:
         lines.append("| Type | Cible | Instruction | Evidence |")
         lines.append("|---|---|---|---|")
         for b in biases:
-            lines.append(
-                f"| `{b['type']}` | {b['key']} | {b['instruction']} | _{b['evidence']}_ |"
-            )
+            lines.append(f"| `{b['type']}` | {b['key']} | {b['instruction']} | _{b['evidence']}_ |")
         lines.append("")
     else:
         lines.append("_Aucun bias automatique appliqué cette semaine._\n")
@@ -259,8 +258,11 @@ def _render_learnings_section(learnings: dict) -> str:
             lines.append(f"{i}. {r}")
         lines.append("")
 
-    lines.append(f"_Learnings actifs dans `{LEARNINGS_PATH}` — éditables manuellement, regénérés chaque lundi 7h._\n")
+    lines.append(
+        f"_Learnings actifs dans `{LEARNINGS_PATH}` — éditables manuellement, regénérés chaque lundi 7h._\n"
+    )
     return "\n".join(lines)
+
 
 load_dotenv()
 
@@ -332,7 +334,9 @@ def _render_markdown(year: int, week: int, posts: list[dict], winners: dict) -> 
         lines.append("| Formule | Picked (90j) | Impressions moy. |")
         lines.append("|---|---|---|")
         for formula, stats in sorted(winners.items(), key=lambda x: -x[1]["picked"]):
-            lines.append(f"| {formula} | {stats['picked']} | {stats['avg_impressions']:,}".replace(",", " ") + " |")
+            lines.append(
+                f"| {formula} | {stats['picked']} | {stats['avg_impressions']:,}".replace(",", " ") + " |"
+            )
         lines.append("")
 
     # ── Best post ─────────────────────────────────────────

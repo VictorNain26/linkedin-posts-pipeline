@@ -161,7 +161,10 @@ def main() -> int:
     print(f"[oauth] person URN  : {person_urn}", file=sys.stderr)
     print(f"[oauth] access TTL  : {expires_in}s (~{expires_in // 86400}d)", file=sys.stderr)
     if not refresh_token:
-        print("[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days", file=sys.stderr)
+        print(
+            "[oauth] WARNING: no refresh_token received — you'll need to re-run this in 60 days",
+            file=sys.stderr,
+        )
     return 0
 
 

@@ -81,6 +81,7 @@ class TestParseTopPostsSheet:
         _build_test_xlsx(xlsx)
 
         from import_analytics_csv import _parse_top_posts_sheet
+
         posts = _parse_top_posts_sheet(xlsx, "MEILLEURS POSTS")
 
         # 2 posts uniques (7234... avec interactions + impressions, 9876... avec impressions seules)
@@ -101,6 +102,7 @@ class TestParseFollowersSheet:
         _build_test_xlsx(xlsx)
 
         from import_analytics_csv import _parse_followers_sheet
+
         rows, total = _parse_followers_sheet(xlsx, "ABONNÉS")
 
         assert total == 1005
@@ -114,6 +116,7 @@ class TestParseDemographicsSheet:
         _build_test_xlsx(xlsx)
 
         from import_analytics_csv import _parse_demographics_sheet
+
         rows = _parse_demographics_sheet(xlsx, "DONNÉES DÉMOGRAPHIQUES")
 
         # rows = list de (dimension, value, percentage)
@@ -127,16 +130,19 @@ class TestParseDemographicsSheet:
 class TestExtractActivityId:
     def test_extracts_from_standard_url(self):
         from import_analytics_csv import _extract_activity_id
+
         url = "https://www.linkedin.com/feed/update/urn:li:activity:7234567890123456789/"
         assert _extract_activity_id(url) == "7234567890123456789"
 
     def test_extracts_from_ugc_url(self):
         from import_analytics_csv import _extract_activity_id
+
         url = "https://www.linkedin.com/posts/foo-activity-9999999999999999999-abc"
         assert _extract_activity_id(url) == "9999999999999999999"
 
     def test_returns_none_on_invalid(self):
         from import_analytics_csv import _extract_activity_id
+
         assert _extract_activity_id("") is None
         assert _extract_activity_id(None) is None
         assert _extract_activity_id("https://example.com/no-id-here") is None
@@ -148,6 +154,7 @@ class TestImportXlsxEndToEnd:
         _build_test_xlsx(xlsx)
 
         from import_analytics_csv import import_xlsx
+
         summary = import_xlsx(xlsx)
 
         # Aucun match avec DB existante → tous créés comme external

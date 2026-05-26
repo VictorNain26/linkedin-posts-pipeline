@@ -132,9 +132,7 @@ def latest_audience_snapshot() -> dict[str, list[tuple[str, float]]]:
     """Renvoie {dimension: [(value, percentage), ...]} pour le snapshot le plus récent."""
     init_db()
     with _conn() as conn:
-        last_ts = conn.execute(
-            "SELECT MAX(snapshot_at) FROM audience_snapshot"
-        ).fetchone()[0]
+        last_ts = conn.execute("SELECT MAX(snapshot_at) FROM audience_snapshot").fetchone()[0]
         if not last_ts:
             return {}
         rows = conn.execute(
