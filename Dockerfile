@@ -127,8 +127,6 @@ COPY --chown=linkedin:linkedin package.json /app/package.json
 
 # ── Code applicatif ──
 COPY --chown=linkedin:linkedin . /app/
-RUN cp /app/docker/crontab.docker /app/crontab
-
 # ── Healthcheck ──
 HEALTHCHECK --interval=5m --timeout=15s --start-period=30s --retries=2 \
     CMD python -c "import os, sys; \
@@ -140,4 +138,4 @@ VOLUME ["/data"]
 
 # ── Init system (dumb-init) → SIGTERM + zombie reaping ──
 ENTRYPOINT ["/usr/bin/dumb-init", "--"]
-CMD ["supercronic", "-inotify", "/app/crontab"]
+CMD ["supercronic", "-inotify", "/app/docker/crontab.docker"]
