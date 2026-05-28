@@ -1,22 +1,27 @@
 """
 Dashboard Streamlit — visualisation du pipeline LinkedIn.
 
-3 pages :
-- 📜 Historique : posts publiés (status='published'), preview PDF + texte + hook variants + analytics
-- 📊 Analytics  : formula_win_rate, format mix, métriques agrégées
-- 🧪 Tests      : posts générés en dry-run (status='test'), même vue que l'historique
+Pages :
+- ✅ Approbation    : approve/reject draft avant publication 10h30
+- 📊 Analytics + IA : coût Anthropic + métriques + analyse Sonnet + audience
+- 🧠 Learnings      : biases auto injectés dans le pipeline (vue détaillée)
+- 📜 Historique     : posts publiés
+- 🧪 Tests          : posts dry-run
 
 Lancement :
     streamlit run dashboard.py
 Accès :
-    ssh -L 8501:localhost:8501 victormoi@victorserv
-    puis http://localhost:8501 dans le navigateur local
+    Tailscale (recommandé, hors LAN) : http://victorserv:8501
+    LAN                               : http://victorserv:8501
+    SSH tunnel (fallback sans TS)     : ssh -L 8501:localhost:8501 victormoi@victorserv
+                                        puis http://localhost:8501
+
+    ⚠️  Ne jamais ajouter le port 8501 à Tailscale Funnel (deviendrait public sans auth).
 """
 
 import json
 import re
 import shutil
-import sqlite3
 import subprocess
 from pathlib import Path
 
@@ -24,22 +29,20 @@ import pandas as pd
 import streamlit as st
 
 # ──────────────────────────────────────────────────────────────
-# Path safety helpers (R2 — anti path traversal sur file_uploader)
+# Path safety helpers (anti path traversal sur file_uploader)
 # ──────────────────────────────────────────────────────────────
 _SAFE_FILENAME_RE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _safe_filename(raw: str, fallback: str = "upload") -> str:
-    """Strip tout ce qui n'est pas alphanumeric/dot/underscore/dash + tronque à 100 chars.
-    Bloque path traversal (../) et caractères shell dangereux. Garantit un nom non-vide."""
+    """Bloque path traversal (../) et caractères shell. Garantit un nom non-vide."""
     cleaned = _SAFE_FILENAME_RE.sub("_", raw).strip("._-")
     cleaned = cleaned[:100]
     return cleaned or fallback
 
 
 def _safe_upload_path(upload_dir: Path, raw_filename: str) -> Path:
-    """Construit un chemin de fichier dans upload_dir, garanti contenu dans le dossier.
-    Lève ValueError si le path résolu sort de upload_dir (defense in depth)."""
+    """Chemin garanti contenu dans upload_dir. Lève ValueError sinon."""
     upload_dir = upload_dir.resolve()
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = _safe_filename(raw_filename)
@@ -58,14 +61,8 @@ APPROVED_FLAG = STATE_DIR / "approved"
 PENDING_ARTICLE = STATE_DIR / "pending_article.json"
 _PIPELINE_SH = Path(__file__).parent / "pipeline.sh"
 
-st.set_page_config(
-    page_title="LinkedIn Posts — Dashboard",
-    page_icon="📊",
-    layout="wide",
-)
-
 # ──────────────────────────────────────────────────────────────
-# Kill-switch publi auto (fichier flag dans DATA_DIR)
+# Kill-switch publi auto
 # ──────────────────────────────────────────────────────────────
 PAUSE_FLAG = Path(OUTPUT_DIR).parent / ".publi_paused"
 
@@ -91,9 +88,10 @@ def set_resumed() -> None:
     PAUSE_FLAG.unlink(missing_ok=True)
 
 
-# DB queries + filesystem helpers extraits dans dashboard_queries.py (R6)
 from dashboard_queries import (  # noqa: E402
+    load_audience_snapshot,
     load_cost_summary,
+    load_follower_growth,
     load_format_distribution,
     load_formula_stats,
     load_hook_variants,
@@ -107,7 +105,42 @@ from dashboard_queries import (  # noqa: E402
 
 
 # ──────────────────────────────────────────────────────────────
-# Rendu d'un post (utilisé par les pages Historique et Tests)
+# Shared helper : generate_learnings (3 call sites → 1 wrapper)
+# ──────────────────────────────────────────────────────────────
+def _call_generate_learnings(success_msg: str = "✅ Analyse générée") -> None:
+    from weekly_report import generate_learnings  # noqa: PLC0415
+
+    with st.status("Claude Sonnet analyse...", expanded=True) as status:
+        try:
+            new_data = generate_learnings(days=28)
+        except Exception as e:
+            status.update(label=f"❌ Erreur : {e}", state="error")
+            return
+    if new_data:
+        status.update(label=success_msg, state="complete", expanded=False)
+        st.cache_data.clear()
+        st.rerun()
+    else:
+        status.update(label="Pas assez de data (< 3 posts publiés).", state="error")
+
+
+# ──────────────────────────────────────────────────────────────
+# Dialog : confirmation de rejet
+# ──────────────────────────────────────────────────────────────
+@st.dialog("❌ Rejeter le draft")
+def _dialog_reject() -> None:
+    st.warning("Cette action supprime le draft en attente. Il faudra regénérer depuis le pipeline.")
+    c1, c2 = st.columns(2)
+    if c1.button("Confirmer", type="primary", use_container_width=True, key="btn_reject_confirm"):
+        PENDING_DRAFT.unlink(missing_ok=True)
+        APPROVED_FLAG.unlink(missing_ok=True)
+        st.rerun()
+    if c2.button("Annuler", use_container_width=True, key="btn_reject_cancel"):
+        st.rerun()
+
+
+# ──────────────────────────────────────────────────────────────
+# Rendu d'un post (Historique + Tests)
 # ──────────────────────────────────────────────────────────────
 def render_post(row: pd.Series) -> None:  # noqa: PLR0912
     post_id = int(row["id"])
@@ -183,7 +216,7 @@ def render_post(row: pd.Series) -> None:  # noqa: PLR0912
 # ──────────────────────────────────────────────────────────────
 # Pages
 # ──────────────────────────────────────────────────────────────
-def page_historique():
+def page_historique() -> None:
     st.title("📜 Historique des posts publiés")
     posts = load_posts(status="published")
     if posts.empty:
@@ -197,7 +230,7 @@ def page_historique():
             render_post(row)
 
 
-def page_tests():
+def page_tests() -> None:
     st.title("🧪 Posts de test (dry-run)")
     st.caption(
         "Posts générés via `./pipeline.sh --dry-run`, jamais publiés sur LinkedIn. "
@@ -215,33 +248,21 @@ def page_tests():
             render_post(row)
 
 
-def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
-    """Section 'Analyse IA' au-dessus des data brutes. Affiche le résumé Sonnet
-    + biases actifs + 5 recos, avec bouton de régénération."""
+# ──────────────────────────────────────────────────────────────
+# Sections Analytics
+# ──────────────────────────────────────────────────────────────
+def _render_ai_analysis_section() -> None:
     st.header("🧠 Analyse — Marketing Lead B2B")
 
     if not LEARNINGS_PATH.exists():
         st.info(
             "Pas encore d'analyse IA générée. "
-            "Min requis : 3 posts publiés (status='published' ou 'external') sur 28j. "
-            "Clique sur **Regénérer** ci-dessous une fois que tu as importé un XLSX."
+            "Min requis : 3 posts publiés (status='published' ou 'external') sur 28j."
         )
         c1, _ = st.columns([1, 3])
         with c1:
             if st.button("🔄 Générer maintenant (~$0.10)", key="gen_learnings_empty"):
-                with st.spinner("Claude Sonnet analyse..."):
-                    from weekly_report import generate_learnings  # noqa: PLC0415
-
-                    try:
-                        new_data = generate_learnings(days=28)
-                        if new_data:
-                            st.success("✅ Analyse générée")
-                            st.cache_data.clear()
-                            st.rerun()
-                        else:
-                            st.warning("Pas assez de data (< 3 posts publiés).")
-                    except Exception as e:
-                        st.error(f"❌ {e}")
+                _call_generate_learnings("✅ Analyse générée")
         st.markdown("---")
         return
 
@@ -252,42 +273,23 @@ def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
         st.markdown("---")
         return
 
-    # Header : metadata + bouton regen
     meta_cols = st.columns([2, 2, 2, 2])
     meta_cols[0].metric("Généré le", data.get("generated_at", "—")[:10])
     meta_cols[1].metric("Basé sur", f"{data.get('based_on_posts', 0)} posts")
     meta_cols[2].metric("Période", f"{data.get('based_on_period_days', 28)}j glissants")
     with meta_cols[3]:
-        st.write("")  # spacing
+        st.write("")
         if st.button("🔄 Regénérer (~$0.10)", key="regen_learnings_section", use_container_width=True):
-            with st.spinner("Claude Sonnet analyse..."):
-                from weekly_report import generate_learnings  # noqa: PLC0415
+            _call_generate_learnings("✅ Regénéré")
 
-                try:
-                    new_data = generate_learnings(days=28)
-                    if new_data:
-                        st.success("✅ Regénéré")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning("Pas assez de data (< 3 posts).")
-                except Exception as e:
-                    st.error(f"❌ {e}")
-
-    # Résumé
     st.info(data.get("summary", "—"))
 
-    # Biases auto + Recos manuelles côte à côte
-    col_biases, col_recos = st.columns([1, 1])
-
+    col_biases, col_recos = st.columns(2)
     with col_biases:
         biases = data.get("biases", [])
-        st.markdown(f"#### ⚙️ Biases injectés dans le pipeline ({len(biases)}/5)")
+        st.markdown(f"#### ⚙️ Biases injectés ({len(biases)}/5)")
         if not biases:
-            st.caption(
-                "Aucun bias détecté avec assez de confiance. Le pipeline tourne sur les defaults. "
-                "Plus tu publieras de posts avec analytics, plus l'IA pourra détecter des patterns."
-            )
+            st.caption("Aucun bias détecté — pipeline sur les defaults.")
         else:
             for b in biases:
                 with st.container(border=True):
@@ -297,7 +299,7 @@ def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
 
     with col_recos:
         recs = data.get("recommendations", [])
-        st.markdown(f"#### 💡 Recommandations actionnables ({len(recs)}/5)")
+        st.markdown(f"#### 💡 Recommandations ({len(recs)}/5)")
         if not recs:
             st.caption("Aucune reco cette semaine.")
         else:
@@ -306,22 +308,12 @@ def _render_ai_analysis_section():  # noqa: PLR0912, PLR0915
 
     with st.expander("🔍 JSON brut (debug / édition manuelle)"):
         st.json(data)
-        st.caption(f"Path : `{LEARNINGS_PATH}` — éditable à la main pour override.")
+        st.caption(f"Path : `{LEARNINGS_PATH}`")
 
     st.markdown("---")
 
 
-def page_analytics():  # noqa: PLR0912, PLR0915
-    st.title("📊 Analytics")
-    st.caption(
-        "Analyse IA + métriques live + démographie audience. "
-        "Workflow : exporte ton XLSX LinkedIn (lien dans la section 📤 en bas), drag-drop le, "
-        "regénère l'analyse. Le pipeline applique ensuite les biases auto à chaque post."
-    )
-
-    # ──────────────────────────────────────────────────────────
-    # 0. Coût de génération Anthropic
-    # ──────────────────────────────────────────────────────────
+def _render_cost_section() -> None:
     cost = load_cost_summary()
     if cost["n_tracked"] > 0:
         st.subheader("Coût génération Anthropic")
@@ -335,28 +327,10 @@ def page_analytics():  # noqa: PLR0912, PLR0915
         )
         st.markdown("---")
 
-    # ──────────────────────────────────────────────────────────
-    # 1. ANALYSE IA en premier (executive summary)
-    # ──────────────────────────────────────────────────────────
-    _render_ai_analysis_section()
 
-    # ──────────────────────────────────────────────────────────
-    # 2. Fenêtre temporelle
-    # ──────────────────────────────────────────────────────────
-    days = st.slider("Fenêtre d'analyse (jours)", min_value=7, max_value=365, value=90, step=7)
-
-    # ──────────────────────────────────────────────────────────
-    # 3. KPIs globaux engagement + growth (côte à côte)
-    # ──────────────────────────────────────────────────────────
+def _render_kpis_section(days: int) -> None:
     posts_metrics = load_post_metrics_summary(days=days)
-    with sqlite3.connect(DB_PATH) as conn:
-        growth = pd.read_sql_query(
-            """SELECT date, new_followers, total_followers
-               FROM follower_growth WHERE date > date('now', ? || ' days')
-               ORDER BY date""",
-            conn,
-            params=(f"-{days}",),
-        )
+    growth = load_follower_growth(days=days)
 
     st.header(f"📈 Performance — {days} derniers jours")
 
@@ -365,63 +339,30 @@ def page_analytics():  # noqa: PLR0912, PLR0915
             "Aucune data sur cette fenêtre. "
             "Importe un XLSX LinkedIn (section 📤 en bas) pour peupler le dashboard."
         )
-    else:
-        # 3 KPIs principaux engagement (XLSX LinkedIn = IMPRESSION + INTERACTION agrégé)
-        if not posts_metrics.empty:
-            kpi_cols = st.columns(3)
-            kpi_cols[0].metric("Posts", len(posts_metrics))
-            kpi_cols[1].metric("Impressions", int(posts_metrics["impressions"].fillna(0).sum()))
-            kpi_cols[2].metric("Interactions", int(posts_metrics["interactions"].fillna(0).sum()))
+        return
 
-        # 3 KPIs croissance abonnés (si data dispo)
-        if not growth.empty:
-            growth["date"] = pd.to_datetime(growth["date"])
-            last_total = (
-                growth["total_followers"].dropna().iloc[-1]
-                if growth["total_followers"].notna().any()
-                else None
-            )
-            k1, k2, k3 = st.columns(3)
-            k1.metric("Total abonnés", f"{int(last_total)}" if last_total else "—")
-            k2.metric(f"Nouveaux sur {days}j", int(growth["new_followers"].sum()))
-            k3.metric("Moyenne /jour", f"{growth['new_followers'].mean():.1f}")
-            st.bar_chart(growth.set_index("date")["new_followers"], height=200)
+    if not posts_metrics.empty:
+        kpi_cols = st.columns(3)
+        kpi_cols[0].metric("Posts", len(posts_metrics))
+        kpi_cols[1].metric("Impressions", int(posts_metrics["impressions"].fillna(0).sum()))
+        kpi_cols[2].metric("Interactions", int(posts_metrics["interactions"].fillna(0).sum()))
 
-    # ──────────────────────────────────────────────────────────
-    # 4. Démographie audience
-    # ──────────────────────────────────────────────────────────
-    st.header("🌍 Audience")
-    with sqlite3.connect(DB_PATH) as conn:
-        last_ts = conn.execute("SELECT MAX(snapshot_at) FROM audience_snapshot").fetchone()[0]
-    if not last_ts:
-        st.caption("Pas de data démographique — importe un XLSX pour activer.")
-    else:
-        st.caption(f"Snapshot du {last_ts[:16]}")
-        with sqlite3.connect(DB_PATH) as conn:
-            demo = pd.read_sql_query(
-                """SELECT dimension, value, percentage FROM audience_snapshot
-                   WHERE snapshot_at = ? ORDER BY dimension, percentage DESC""",
-                conn,
-                params=(last_ts,),
-            )
-        dimensions = demo["dimension"].unique().tolist()
-        cols = st.columns(min(len(dimensions), 3) or 1)
-        for i, dim in enumerate(dimensions):
-            sub = demo[demo["dimension"] == dim].head(5)
-            with cols[i % len(cols)]:
-                st.markdown(f"**{dim}**")
-                for _, row in sub.iterrows():
-                    pct = row["percentage"] * 100
-                    st.markdown(f"- {row['value']} — `{pct:.1f}%`")
+    if not growth.empty:
+        growth["date"] = pd.to_datetime(growth["date"])
+        last_total = (
+            growth["total_followers"].dropna().iloc[-1] if growth["total_followers"].notna().any() else None
+        )
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Total abonnés", f"{int(last_total)}" if last_total else "—")
+        k2.metric(f"Nouveaux sur {days}j", int(growth["new_followers"].sum()))
+        k3.metric("Moyenne /jour", f"{growth['new_followers'].mean():.1f}")
+        st.bar_chart(growth.set_index("date")["new_followers"], height=200)
 
-    # ──────────────────────────────────────────────────────────
-    # 5. Détail par post
-    # ──────────────────────────────────────────────────────────
     if not posts_metrics.empty:
         st.header("📋 Posts détaillés")
         st.caption(
             "Interactions = réactions + commentaires + partages (agrégé XLSX LinkedIn). "
-            "Métriques séparées disponibles via API scope `r_member_postAnalytics` uniquement."
+            "Métriques séparées via API scope `r_member_postAnalytics` uniquement."
         )
         st.dataframe(
             posts_metrics[["published_at", "topic", "format", "impressions", "interactions"]],
@@ -436,9 +377,26 @@ def page_analytics():  # noqa: PLR0912, PLR0915
             },
         )
 
-    # ──────────────────────────────────────────────────────────
-    # 6. Performance par formule de hook + format
-    # ──────────────────────────────────────────────────────────
+
+def _render_audience_section() -> None:
+    st.header("🌍 Audience")
+    last_ts, demo = load_audience_snapshot()
+    if not last_ts:
+        st.caption("Pas de data démographique — importe un XLSX pour activer.")
+        return
+    st.caption(f"Snapshot du {last_ts[:16]}")
+    dimensions = demo["dimension"].unique().tolist()
+    cols = st.columns(min(len(dimensions), 3) or 1)
+    for i, dim in enumerate(dimensions):
+        sub = demo[demo["dimension"] == dim].head(5)
+        with cols[i % len(cols)]:
+            st.markdown(f"**{dim}**")
+            for _, row in sub.iterrows():
+                pct = row["percentage"] * 100
+                st.markdown(f"- {row['value']} — `{pct:.1f}%`")
+
+
+def _render_patterns_section(days: int) -> None:
     st.header("🎯 Patterns gagnants")
     col_fa, col_fb = st.columns(2)
 
@@ -466,15 +424,15 @@ def page_analytics():  # noqa: PLR0912, PLR0915
         else:
             st.bar_chart(fmt.set_index("format")["n"])
 
-    # ──────────────────────────────────────────────────────────
-    # 7. Import XLSX (workflow hebdo)
-    # ──────────────────────────────────────────────────────────
+
+@st.fragment
+def _render_import_section() -> None:
+    """Fragment isolé : interactions avec le file_uploader ne rerunnent pas toute la page."""
     st.markdown("---")
     with st.expander("📤 Importer un export LinkedIn Analytics (XLSX hebdo)", expanded=False):
         st.markdown(
-            "**Workflow** : récupère ton XLSX depuis [LinkedIn Analytics → Posts → Export]"
-            "(https://www.linkedin.com/analytics/creator), drag-drop ci-dessous, "
-            "puis clique **Regénérer l'analyse IA** en haut. Tout est persisté en DB."
+            "**Workflow** : récupère ton XLSX depuis LinkedIn Analytics → Posts → Export, "
+            "drag-drop ci-dessous, puis clique **Regénérer l'analyse IA** en haut."
         )
         uploaded = st.file_uploader(
             "Drag & drop XLSX/CSV",
@@ -508,27 +466,49 @@ def page_analytics():  # noqa: PLR0912, PLR0915
                         st.warning(w)
                 if st.button("🔄 Rafraîchir + suggérer regen IA", key="refresh_after_import"):
                     st.cache_data.clear()
-                    st.rerun()
+                    st.rerun()  # full rerun depuis un fragment
             except Exception as e:
                 st.error(f"❌ Erreur d'import : {e}")
 
 
-# ──────────────────────────────────────────────────────────────
-# Sidebar nav
-# ──────────────────────────────────────────────────────────────
-def page_learnings():  # noqa: PLR0915
+def page_analytics() -> None:
+    st.title("📊 Analytics")
+    st.caption(
+        "Analyse IA + métriques + démographie. "
+        "Workflow : exporte ton XLSX LinkedIn (section 📤 en bas), importe-le, "
+        "puis regénère l'analyse IA."
+    )
+
+    _render_cost_section()
+    _render_ai_analysis_section()
+
+    days = st.slider(
+        "Fenêtre d'analyse (jours)",
+        min_value=7,
+        max_value=365,
+        value=90,
+        step=7,
+        key="analytics_days_slider",
+    )
+
+    _render_kpis_section(days)
+    _render_audience_section()
+    _render_patterns_section(days)
+    _render_import_section()
+
+
+def page_learnings() -> None:
     st.title("🧠 Learnings — bias auto injectés dans le pipeline")
     st.caption(
         "Généré chaque lundi 7h par `weekly_report.sh` via Claude Sonnet. "
-        "Le fichier `state/learnings.json` est lu par le pipeline au moment de générer un post, "
-        "et injecté comme 4e block system (cache_control: ephemeral). "
+        "Injecté comme block system dans chaque appel pipeline. "
         "**TTL 14j** : au-delà, learnings ignorés tant que pas regénérés."
     )
 
     if not LEARNINGS_PATH.exists():
         st.info(
             "Pas de `learnings.json` pour l'instant. "
-            "Lance `python3 weekly_report.py` (ou attends lundi 7h) pour générer la 1re analyse. "
+            "Lance `python3 weekly_report.py` (ou attends lundi 7h). "
             "Min requis : 3 posts publiés sur 28j."
         )
         return
@@ -539,7 +519,6 @@ def page_learnings():  # noqa: PLR0915
         st.error(f"learnings.json malformé : {e}")
         return
 
-    # Métadonnées
     col1, col2, col3 = st.columns(3)
     col1.metric("Généré le", data.get("generated_at", "—")[:10])
     col2.metric("Basé sur", f"{data.get('based_on_posts', 0)} posts")
@@ -548,7 +527,6 @@ def page_learnings():  # noqa: PLR0915
     st.subheader("Résumé")
     st.info(data.get("summary", "—"))
 
-    # Biases
     biases = data.get("biases", [])
     st.subheader(f"Biases appliqués au pipeline ({len(biases)}/5)")
     if not biases:
@@ -562,7 +540,6 @@ def page_learnings():  # noqa: PLR0915
                 cols[2].markdown(b.get("instruction", "—"))
                 cols[3].caption(f"_{b.get('evidence', '')}_")
 
-    # Recommandations
     recs = data.get("recommendations", [])
     st.subheader(f"Recommandations actionnables ({len(recs)}/5)")
     if not recs:
@@ -573,38 +550,30 @@ def page_learnings():  # noqa: PLR0915
 
     st.markdown("---")
     st.subheader("⚙️ Actions")
-    col_a, col_b = st.columns([1, 1])
+    col_a, col_b = st.columns(2)
     with col_a:
         if st.button("🔄 Regénérer maintenant (~$0.10)", key="regen_learnings"):
-            with st.spinner("Analyse Claude Sonnet en cours..."):
-                from weekly_report import generate_learnings  # noqa: PLC0415
-
-                try:
-                    new_data = generate_learnings(days=28)
-                    if new_data:
-                        st.success("✅ learnings.json regénéré")
-                        st.cache_data.clear()
-                        st.rerun()
-                    else:
-                        st.warning("Pas assez de data (< 3 posts publiés) — learnings non écrit")
-                except Exception as e:
-                    st.error(f"❌ {e}")
+            _call_generate_learnings("✅ learnings.json regénéré")
     with col_b:
         st.code(f"Path : {LEARNINGS_PATH}", language="text")
-        st.caption("Éditable manuellement à la main si tu veux override un bias.")
+        st.caption("Éditable manuellement pour override un bias.")
 
-    # JSON brut (collapsé)
-    with st.expander("🔍 JSON brut (pour debug ou édition manuelle)"):
+    with st.expander("🔍 JSON brut (debug / édition manuelle)"):
         st.json(data)
 
 
-def page_approbation():  # noqa: PLR0912, PLR0915
+def page_approbation() -> None:  # noqa: PLR0912, PLR0915
     st.title("✅ Approbation du draft")
+
+    if not _PIPELINE_SH.exists():
+        st.error(f"pipeline.sh introuvable : {_PIPELINE_SH}")
+        return
 
     if not PENDING_DRAFT.exists():
         st.info("Aucun draft en attente. Le pipeline génère à 09h00 (mar/mer/jeu).")
-        if st.button("🚀 Générer un post maintenant", type="primary"):
-            with st.spinner("Sélection de l'article (08h00)…"):
+        if st.button("🚀 Générer un post maintenant", type="primary", key="btn_generate_post"):
+            with st.status("Génération du post…", expanded=True) as status:
+                status.write("Sélection de l'article RSS…")
                 r1 = subprocess.run(  # noqa: S603
                     ["bash", str(_PIPELINE_SH), "--select-only"],  # noqa: S607
                     capture_output=True,
@@ -613,32 +582,40 @@ def page_approbation():  # noqa: PLR0912, PLR0915
                     cwd=str(_PIPELINE_SH.parent),
                     check=False,
                 )
-            if r1.returncode != 0:
-                st.error("Échec --select-only")
-                st.text(r1.stderr[-1000:] if r1.stderr else "")
-                return
-            if not PENDING_ARTICLE.exists():
-                st.warning("Aucun article pertinent trouvé dans les flux RSS aujourd'hui.")
-                return
-            with st.spinner("Génération du post (~2 min)…"):
-                r2 = subprocess.run(  # noqa: S603
-                    ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
-                    capture_output=True,
-                    text=True,
-                    timeout=300,
-                    cwd=str(_PIPELINE_SH.parent),
-                    check=False,
-                )
-            if r2.returncode == 0:
-                st.success("Draft prêt.")
-                st.rerun()
-            else:
-                st.error(f"Échec --draft (exit {r2.returncode})")
-                st.text(r2.stderr[-1000:] if r2.stderr else "")
+                if r1.returncode != 0:
+                    status.update(label="Échec --select-only", state="error")
+                    st.text(r1.stderr[-1000:] if r1.stderr else "")
+                elif not PENDING_ARTICLE.exists():
+                    status.update(label="Aucun article pertinent trouvé aujourd'hui.", state="error")
+                else:
+                    status.write("Article sélectionné — génération du contenu (~2 min)…")
+                    r2 = subprocess.run(  # noqa: S603
+                        ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
+                        capture_output=True,
+                        text=True,
+                        timeout=300,
+                        cwd=str(_PIPELINE_SH.parent),
+                        check=False,
+                    )
+                    if r2.returncode == 0:
+                        status.update(label="Draft prêt !", state="complete", expanded=False)
+                        st.rerun()
+                    else:
+                        status.update(label=f"Échec --draft (exit {r2.returncode})", state="error")
+                        st.text(r2.stderr[-1000:] if r2.stderr else "")
         return
 
     draft = json.loads(PENDING_DRAFT.read_text(encoding="utf-8"))
     approved = APPROVED_FLAG.exists()
+
+    # Validation post_dir une fois (anti path traversal pour shutil.copy + lecture PDF)
+    _post_dir_raw = Path(draft.get("post_dir", ""))
+    _output_base = Path(OUTPUT_DIR).resolve()
+    try:
+        _post_dir_raw.resolve().relative_to(_output_base)
+        post_dir: Path | None = _post_dir_raw
+    except ValueError:
+        post_dir = None
 
     st.markdown(f"**Article source :** {draft.get('article_title', '?')}")
     if draft.get("article_url"):
@@ -650,51 +627,88 @@ def page_approbation():  # noqa: PLR0912, PLR0915
     col1, col2, col3 = st.columns([2, 1, 1])
     with col1:
         if approved:
-            st.success("✅ **Approuvé** — sera publié à 10h30")
-            if st.button("↩️ Annuler l'approbation", type="secondary"):
-                APPROVED_FLAG.unlink(missing_ok=True)
-                st.rerun()
-        elif st.button("✅ Approuver", type="primary", use_container_width=True):
-            APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
-            st.rerun()
-    with col2:
-        if st.button("🔄 Régénérer", type="secondary", use_container_width=True, disabled=approved):
-            post_dir = Path(draft.get("post_dir", ""))
-            news_src = post_dir / "news.json"
-            if news_src.exists():
-                PENDING_DRAFT.unlink(missing_ok=True)
-                APPROVED_FLAG.unlink(missing_ok=True)
-                shutil.copy(news_src, PENDING_ARTICLE)
-                with st.spinner("Régénération en cours (~2 min)…"):
+            st.success("✅ **Approuvé**")
+            st.caption(
+                "Publication auto au prochain créneau 10h30 (mar/mer/jeu), "
+                "ou publie tout de suite ci-dessous."
+            )
+            if st.button(
+                "📤 Publier maintenant",
+                type="primary",
+                use_container_width=True,
+                key="btn_publish_now",
+            ):
+                with st.status("Publication LinkedIn en cours…", expanded=True) as status:
                     result = subprocess.run(  # noqa: S603
-                        ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
+                        ["bash", str(_PIPELINE_SH)],  # noqa: S607
                         capture_output=True,
                         text=True,
                         timeout=300,
                         cwd=str(_PIPELINE_SH.parent),
                         check=False,
                     )
-                if result.returncode == 0:
-                    st.success("Nouveau draft prêt.")
-                else:
-                    st.error(f"Échec régénération (exit {result.returncode}).")
-                    st.text(result.stderr[-1000:] if result.stderr else "")
+                    # Succès fiable = le draft a été consommé (retiré seulement quand on publie
+                    # vraiment ; tous les skips — pause, déjà publié, verrou — sortent avant).
+                    published = result.returncode == 0 and not PENDING_DRAFT.exists()
+                    if published:
+                        status.update(label="Publié sur LinkedIn ✅", state="complete", expanded=False)
+                        st.rerun()
+                    else:
+                        status.update(label="Non publié — voir le détail", state="error")
+                        tail = ((result.stdout or "") + (result.stderr or ""))[-1500:]
+                        st.text(tail or "(aucune sortie)")
+            if st.button("↩️ Annuler l'approbation", type="secondary", key="btn_cancel_approval"):
+                APPROVED_FLAG.unlink(missing_ok=True)
                 st.rerun()
-            else:
-                st.error("Article source introuvable — impossible de régénérer.")
-    with col3:
-        if st.button("❌ Rejeter", type="secondary", use_container_width=True):
-            PENDING_DRAFT.unlink(missing_ok=True)
-            APPROVED_FLAG.unlink(missing_ok=True)
+        elif st.button("✅ Approuver", type="primary", use_container_width=True, key="btn_approve_draft"):
+            APPROVED_FLAG.write_text("approved via dashboard", encoding="utf-8")
             st.rerun()
+    with col2:
+        if st.button(
+            "🔄 Régénérer",
+            type="secondary",
+            use_container_width=True,
+            disabled=approved,
+            key="btn_regenerate_draft",
+        ):
+            if post_dir is None:
+                st.error(f"Chemin invalide dans pending_draft.json : {_post_dir_raw}")
+            else:
+                news_src = post_dir / "news.json"
+                if not news_src.exists():
+                    st.error("news.json introuvable pour cet article — régénération impossible.")
+                else:
+                    # On NE supprime PAS le draft courant ici : --draft écrit un nouveau
+                    # pending_draft (et reset l'approbation) UNIQUEMENT sur succès. En cas
+                    # d'échec, l'ancien draft reste intact — pas de perte.
+                    shutil.copy(news_src, PENDING_ARTICLE)
+                    with st.status("Régénération…", expanded=True) as status:
+                        result = subprocess.run(  # noqa: S603
+                            ["bash", str(_PIPELINE_SH), "--draft"],  # noqa: S607
+                            capture_output=True,
+                            text=True,
+                            timeout=300,
+                            cwd=str(_PIPELINE_SH.parent),
+                            check=False,
+                        )
+                        if result.returncode == 0:
+                            status.update(label="Nouveau draft prêt.", state="complete", expanded=False)
+                            st.rerun()
+                        else:
+                            status.update(
+                                label=f"Échec régénération (exit {result.returncode}) — draft conservé.",
+                                state="error",
+                            )
+                            st.text((result.stderr or result.stdout or "")[-1500:])
+    with col3:
+        if st.button("❌ Rejeter", type="secondary", use_container_width=True, key="btn_reject_draft"):
+            _dialog_reject()
 
     st.markdown("---")
 
-    # Preview post text
     with st.expander("📝 Texte du post (hook + hashtags)", expanded=True):
         st.text(draft.get("post_text", ""))
 
-    # Preview slides
     slides = draft.get("slides_structured", [])
     if slides:
         with st.expander(f"🎞️ Slides ({len(slides)})", expanded=True):
@@ -703,20 +717,17 @@ def page_approbation():  # noqa: PLR0912, PLR0915
                 if slide.get("sub"):
                     st.caption(slide["sub"])
 
-    # Preview PDF if carousel
-    post_dir = Path(draft.get("post_dir", ""))
-    pdf_path = post_dir / "carousel.pdf"
-    if pdf_path.exists():
-        with st.expander("📄 Aperçu PDF carousel"):
-            pages = render_pdf_pages(str(pdf_path), scale=1.2)
-            for img in pages[:3]:
-                st.image(img, use_container_width=True)
+    if post_dir is not None:
+        pdf_path = post_dir / "carousel.pdf"
+        if pdf_path.exists():
+            with st.expander("📄 Aperçu PDF carousel"):
+                pages = render_pdf_pages(str(pdf_path), scale=1.2)
+                for img in pages[:3]:
+                    st.image(img, use_container_width=True)
 
-    # First comment preview
     with st.expander("💬 Premier commentaire (CTA)"):
         st.text(draft.get("first_comment", ""))
 
-    # Hook variants
     variants = draft.get("hook_variants", [])
     if variants:
         with st.expander("🎣 Variantes de hook testées"):
@@ -727,57 +738,75 @@ def page_approbation():  # noqa: PLR0912, PLR0915
             st.caption(f"Raison du choix : {draft.get('hook_winner_reason', '')}")
 
 
-PAGES = {
-    "✅ Approbation": page_approbation,
-    "📊 Analytics + IA": page_analytics,
-    "📜 Historique posts publiés": page_historique,
-    "🧪 Tests (dry-run)": page_tests,
-}
+# ══════════════════════════════════════════════════════════════
+# App entrypoint
+# ══════════════════════════════════════════════════════════════
 
+st.set_page_config(
+    page_title="LinkedIn Posts — Dashboard",
+    page_icon="📊",
+    layout="wide",
+)
+
+# st.navigation doit être appelé juste après set_page_config, avant tout autre st.*
+_nav = st.navigation(
+    [
+        st.Page(page_approbation, title="Approbation", icon="✅", url_path="approbation"),
+        st.Page(page_analytics, title="Analytics + IA", icon="📊", url_path="analytics"),
+        st.Page(page_learnings, title="Learnings", icon="🧠", url_path="learnings"),
+        st.Page(page_historique, title="Historique", icon="📜", url_path="historique"),
+        st.Page(page_tests, title="Tests (dry-run)", icon="🧪", url_path="tests"),
+    ],
+    position="sidebar",
+)
+
+# ──────────────────────────────────────────────────────────────
+# Sidebar partagée (visible sur toutes les pages)
+# ──────────────────────────────────────────────────────────────
 st.sidebar.title("LinkedIn Pipeline")
 st.sidebar.caption("Dashboard — Victor Lenain")
+
 if PENDING_DRAFT.exists():
-    approved = APPROVED_FLAG.exists()
-    badge = "✅ Approuvé" if approved else "⏳ En attente"
-    st.sidebar.warning(f"Draft prêt : {badge}")
-choice = st.sidebar.radio("Pages", list(PAGES.keys()), label_visibility="collapsed")
+    _approved = APPROVED_FLAG.exists()
+    _badge = "✅ Approuvé" if _approved else "⏳ En attente"
+    st.sidebar.warning(f"Draft prêt : {_badge}")
 
 st.sidebar.markdown("---")
-
-# Toggle publi auto (kill-switch)
 st.sidebar.subheader("⚙️ Publi auto")
 paused_now = is_paused()
-status_emoji = "⏸️ EN PAUSE" if paused_now else "▶️ ACTIVE"
-status_color = "red" if paused_now else "green"
-st.sidebar.markdown(f"État : :{status_color}[**{status_emoji}**]")
+_status_emoji = "⏸️ EN PAUSE" if paused_now else "▶️ ACTIVE"
+_status_color = "red" if paused_now else "green"
+st.sidebar.markdown(f"État : :{_status_color}[**{_status_emoji}**]")
 
 if paused_now:
-    reason = pause_reason()
-    if reason:
-        st.sidebar.caption(f"Motif : _{reason}_")
-    if st.sidebar.button("▶️ Réactiver la publi auto", type="primary"):
+    _reason = pause_reason()
+    if _reason:
+        st.sidebar.caption(f"Motif : _{_reason}_")
+    if st.sidebar.button("▶️ Réactiver la publi auto", type="primary", key="btn_resume_publi"):
         set_resumed()
         st.rerun()
 else:
-    reason_input = st.sidebar.text_input(
+    _reason_input = st.sidebar.text_input(
         "Motif (optionnel)", placeholder="ex: vacances, refonte contenu...", key="pause_reason"
     )
-    if st.sidebar.button("⏸️ Mettre en pause", type="secondary"):
-        set_paused(reason_input)
+    if st.sidebar.button("⏸️ Mettre en pause", type="secondary", key="btn_pause_publi"):
+        set_paused(_reason_input)
         st.rerun()
 
 st.sidebar.markdown("---")
 st.sidebar.caption(f"DB : `{DB_PATH}`")
 st.sidebar.caption(f"Output : `{OUTPUT_DIR}`")
 
-if st.sidebar.button("🔄 Refresh data"):
+if st.sidebar.button("🔄 Refresh data", key="btn_refresh_data"):
     st.cache_data.clear()
     st.rerun()
 
-# Banner d'alerte en haut de chaque page si la publi est en pause
-if is_paused():
-    reason = pause_reason()
-    suffix = f" — _{reason}_" if reason else ""
-    st.error(f"⏸️ **PUBLI AUTO EN PAUSE** : aucun post ne sera publié par le cron mar/mer/jeu 10h30.{suffix}")
+# ──────────────────────────────────────────────────────────────
+# Banner pause (main area, au-dessus du contenu de la page)
+# ──────────────────────────────────────────────────────────────
+if paused_now:
+    _reason = pause_reason()
+    _suffix = f" — _{_reason}_" if _reason else ""
+    st.error(f"⏸️ **PUBLI AUTO EN PAUSE** : aucun post ne sera publié par le cron mar/mer/jeu 10h30.{_suffix}")
 
-PAGES[choice]()
+_nav.run()

@@ -75,8 +75,13 @@ services:
   # Dashboard Streamlit — visualisation historique / analytics / tests
   # + toggle publi auto (touche ~/data/.publi_paused, lu par pipeline.sh)
   #
-  # ⚠️  Accessible sur tout le LAN sans auth — adapté home network solo.
-  #     Pour exposer à du monde : sidecar Caddy/nginx + Basic Auth ou OAuth.
+  # Accès :
+  #   LAN + Tailscale : http://victorserv:8501  (MagicDNS — IP Tailscale 100.74.84.25)
+  #   0.0.0.0 est volontaire : capture l'interface tailscale0 sans config supplémentaire.
+  #
+  # ⚠️  Pas d'auth applicative — modèle de sécurité = Tailscale (WireGuard device auth).
+  #     NE PAS ajouter ce port au Tailscale Funnel (deviendrait public sans auth).
+  #     Pour partager avec quelqu'un : sidecar Caddy + Basic Auth, puis Funnel.
   # ──────────────────────────────────────────────────────────────
   linkedin-dashboard:
     build:

@@ -164,3 +164,32 @@ def read_text_file(path: Path) -> str:
         return path.read_text(encoding="utf-8")
     except (FileNotFoundError, OSError):
         return ""
+
+
+@st.cache_data(ttl=60)
+def load_follower_growth(days: int) -> pd.DataFrame:
+    """Croissance abonnés sur la fenêtre glissante (jours)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        return pd.read_sql_query(
+            """SELECT date, new_followers, total_followers
+               FROM follower_growth WHERE date > date('now', ? || ' days')
+               ORDER BY date""",
+            conn,
+            params=(f"-{days}",),
+        )
+
+
+@st.cache_data(ttl=60)
+def load_audience_snapshot() -> tuple[str | None, pd.DataFrame]:
+    """Snapshot démographique le plus récent. Retourne (last_ts, DataFrame) ou (None, DataFrame vide)."""
+    with sqlite3.connect(DB_PATH) as conn:
+        last_ts = conn.execute("SELECT MAX(snapshot_at) FROM audience_snapshot").fetchone()[0]
+        if not last_ts:
+            return None, pd.DataFrame()
+        demo = pd.read_sql_query(
+            """SELECT dimension, value, percentage FROM audience_snapshot
+               WHERE snapshot_at = ? ORDER BY dimension, percentage DESC""",
+            conn,
+            params=(last_ts,),
+        )
+    return last_ts, demo
