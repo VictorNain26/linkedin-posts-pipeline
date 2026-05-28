@@ -22,6 +22,12 @@ load_dotenv()
 _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
 logger = get_logger(__name__)
 
+
+class TruncatedToolUseError(RuntimeError):
+    """tool_use forcé tronqué par max_tokens : le JSON d'arguments est incomplet.
+    Renvoyer ce dict partiel ferait sauter un KeyError opaque chez l'appelant —
+    on lève explicitement pour que le budget soit corrigé ou la news suivante tentée."""
+
 # Prix par million de tokens (USD) — Anthropic mai 2026
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {"in": 3.0, "out": 15.0, "cache_write": 3.75, "cache_read": 0.30},
@@ -128,6 +134,12 @@ def call_tool(
                 entry["cache_read_input_tokens"],
                 call_cost,
             )
+
+            if resp.stop_reason == "max_tokens":
+                raise TruncatedToolUseError(
+                    f"tool '{tool['name']}' tronqué à max_tokens={max_tokens} "
+                    f"(out={entry['output_tokens']}) — augmente le budget de cet appel"
+                )
 
             for block in resp.content:
                 if getattr(block, "type", None) == "tool_use" and block.name == tool["name"]:

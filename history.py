@@ -214,17 +214,21 @@ def record_post(
         return cur.lastrowid
 
 
-def get_recent_keywords(days: int = MAX_HISTORY_DAYS) -> list[str]:
+def recent_published_topics(limit: int = 8, days: int = MAX_HISTORY_DAYS) -> list[str]:
+    """Sujets des N derniers posts publiés (titre court), du plus récent au plus ancien.
+
+    Alimente le scorer RSS : on les donne à Haiku pour qu'il écarte sémantiquement tout
+    article reprenant un sujet ou un angle déjà couvert (remplace l'ancien dédup par mots-clés,
+    aveugle au sens : « sanction CNIL IQVIA » vs « sanction CNIL Doctolib » sont le même angle)."""
     init_db()
     with _conn() as conn:
         rows = conn.execute(
-            "SELECT keywords FROM posts WHERE published_at > datetime('now', ? || ' days') AND status = 'published'",
-            (f"-{days}",),
+            """SELECT topic FROM posts
+               WHERE status = 'published' AND published_at > datetime('now', ? || ' days')
+               ORDER BY published_at DESC LIMIT ?""",
+            (f"-{days}", limit),
         ).fetchall()
-    all_kw: list[str] = []
-    for row in rows:
-        all_kw.extend(json.loads(row[0]))
-    return all_kw
+    return [row[0].split(".", 1)[0].strip()[:100] for row in rows if row[0]]
 
 
 def get_recent_slugs(days: int = MAX_HISTORY_DAYS) -> set[str]:
@@ -235,16 +239,6 @@ def get_recent_slugs(days: int = MAX_HISTORY_DAYS) -> set[str]:
             (f"-{days}",),
         ).fetchall()
     return {row[0] for row in rows}
-
-
-def keyword_overlap_ratio(new_keywords: list[str], days: int = MAX_HISTORY_DAYS) -> float:
-    new_set = {k.lower() for k in new_keywords}
-    if not new_set:
-        return 0.0
-    recent = {k.lower() for k in get_recent_keywords(days)}
-    if not recent:
-        return 0.0
-    return len(new_set & recent) / len(new_set)
 
 
 def last_published_at() -> datetime | None:
@@ -288,6 +282,25 @@ def record_hook_variants(post_id: int, variants: list[dict], winner_formula: str
                     judge_reason if v["formula"] == winner_formula else None,
                 ),
             )
+
+
+def recent_winning_hooks(limit: int = 8) -> list[str]:
+    """Renvoie les hooks gagnants des N derniers posts publiés, du plus récent au plus ancien.
+
+    Sert à l'anti-répétition d'angle : on injecte ces accroches dans l'Angle Scout pour
+    qu'il propose un angle distinct de ce qui est déjà sorti.
+    """
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            """SELECT hv.hook FROM hook_variants hv
+               JOIN posts p ON p.id = hv.post_id
+               WHERE hv.is_winner = 1 AND p.status = 'published'
+               ORDER BY p.published_at DESC
+               LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [r[0] for r in rows]
 
 
 def formula_win_rate(days: int = 90) -> dict[str, dict]:

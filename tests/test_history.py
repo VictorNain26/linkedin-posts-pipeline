@@ -32,37 +32,46 @@ class TestRecordPost:
         assert history.posted_today() is True
 
 
-class TestKeywordOverlap:
-    def test_zero_with_empty_history(self, tmp_data_dir):
+class TestRecentPublishedTopics:
+    def test_empty_when_no_history(self, tmp_data_dir):
         import history
 
-        assert history.keyword_overlap_ratio(["ia", "claude"]) == 0.0
+        assert history.recent_published_topics() == []
 
-    def test_zero_with_empty_new(self, tmp_data_dir):
+    def test_returns_title_part_most_recent_first(self, tmp_data_dir):
         import history
 
         history.record_post(
-            topic="t",
-            slug="s",
+            topic="Sujet A. Résumé long de l'article A.",
+            slug="a",
             format="carousel",
             keywords=["ia"],
             linkedin_post_id="urn:li:ugcPost:1",
         )
-        assert history.keyword_overlap_ratio([]) == 0.0
+        history.record_post(
+            topic="Sujet B. Résumé de B.",
+            slug="b",
+            format="carousel",
+            keywords=["rag"],
+            linkedin_post_id="urn:li:ugcPost:2",
+        )
+        topics = history.recent_published_topics()
+        # Titre seul (avant le 1er point), plus récent en tête.
+        assert topics[0] == "Sujet B"
+        assert "Sujet A" in topics
 
-    def test_partial_overlap(self, tmp_data_dir):
+    def test_excludes_non_published(self, tmp_data_dir):
         import history
 
         history.record_post(
-            topic="t",
-            slug="s",
+            topic="Brouillon. test.",
+            slug="d",
             format="carousel",
-            keywords=["ia", "claude", "rag"],
-            linkedin_post_id="urn:li:ugcPost:1",
+            keywords=[],
+            status="test",
+            linkedin_post_id="urn:li:ugcPost:3",
         )
-        # 1 commun sur 3 nouveaux = 0.333
-        ratio = history.keyword_overlap_ratio(["ia", "nodejs", "docker"])
-        assert 0.3 < ratio < 0.4
+        assert history.recent_published_topics() == []
 
 
 class TestHookVariants:
@@ -91,6 +100,56 @@ class TestHookVariants:
         stats = history.formula_win_rate()
         assert "data" in stats
         assert stats["data"]["picked"] == 1
+
+
+class TestRecentWinningHooks:
+    def test_empty_when_no_posts(self, tmp_data_dir):
+        import history
+
+        assert history.recent_winning_hooks() == []
+
+    def test_returns_only_winners_recent_first(self, tmp_data_dir):
+        import history
+
+        for i in range(2):
+            pid = history.record_post(
+                topic=f"t{i}",
+                slug=f"s{i}",
+                format="carousel",
+                keywords=[],
+                linkedin_post_id=f"urn:li:ugcPost:{i}",
+            )
+            history.record_hook_variants(
+                post_id=pid,
+                variants=[
+                    {"formula": "contrarian", "hook": f"loser-{i}"},
+                    {"formula": "data", "hook": f"winner-{i}"},
+                ],
+                winner_formula="data",
+                judge_reason="r",
+            )
+        hooks = history.recent_winning_hooks(limit=8)
+        # Seuls les gagnants, ordre du plus récent au plus ancien
+        assert hooks == ["winner-1", "winner-0"]
+
+    def test_respects_limit(self, tmp_data_dir):
+        import history
+
+        for i in range(3):
+            pid = history.record_post(
+                topic=f"t{i}",
+                slug=f"s{i}",
+                format="carousel",
+                keywords=[],
+                linkedin_post_id=f"urn:li:ugcPost:{i}",
+            )
+            history.record_hook_variants(
+                post_id=pid,
+                variants=[{"formula": "data", "hook": f"winner-{i}"}],
+                winner_formula="data",
+                judge_reason="r",
+            )
+        assert len(history.recent_winning_hooks(limit=2)) == 2
 
 
 class TestAnalytics:

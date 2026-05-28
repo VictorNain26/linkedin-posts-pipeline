@@ -4,9 +4,9 @@ Veille RSS — fetch articles récents, enrich avec contenu, score avec Haiku.
 Robustesse :
 - Socket timeout par défaut sur feedparser
 - Erreurs RSS isolées (1 source down != pipeline KO)
-- Scoring via tool_use + JSON Schema strict
-- Enrichissement HTTP : si summary vide, on fetch l'URL pour récup le contenu réel
-  (évite que les agents inventent en partant de juste un titre)
+- Scoring via tool_use + JSON Schema strict (sur titre + résumé RSS, sans fetch HTTP)
+- Extraction du corps complet (trafilatura) faite UNIQUEMENT sur l'article retenu,
+  côté generate_post — pas de fetch en masse avant scoring (économie latence + bande passante)
 """
 
 import json
@@ -18,6 +18,7 @@ from html.parser import HTMLParser
 
 import feedparser
 import requests
+import trafilatura
 
 from anthropic_client import call_tool
 from config import (
@@ -84,10 +85,8 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\s+", " ", parser.text()).strip()
 
 
-def fetch_article_content(url: str) -> str:
-    """Fetch URL et extract text content. Renvoie '' si fail (caller décide)."""
-    if not url:
-        return ""
+def _fetch_html(url: str) -> str:
+    """Récupère le HTML brut d'une URL. Renvoie '' si fail."""
     try:
         resp = requests.get(
             url,
@@ -96,11 +95,31 @@ def fetch_article_content(url: str) -> str:
         )
         if resp.status_code != 200:
             return ""
-        text = _strip_html(resp.text)
-        return text[:RSS_ARTICLE_MAX_CHARS]
+        return resp.text
     except (requests.RequestException, OSError) as e:
         print(f"[rss] article fetch failed for {url}: {e}", file=sys.stderr)
         return ""
+
+
+def fetch_article_text(url: str) -> str:
+    """Extrait le corps propre d'un article (trafilatura : sans nav/cookies/sponsor).
+
+    Fallback sur un strip HTML basique si trafilatura échoue. Renvoie '' si tout échoue
+    (le caller décide : _article_context bascule alors sur le résumé RSS).
+    """
+    if not url:
+        return ""
+    html = _fetch_html(url)
+    if not html:
+        return ""
+    extracted = trafilatura.extract(
+        html,
+        include_comments=False,
+        include_tables=True,
+        favor_recall=True,
+    )
+    text = extracted or _strip_html(html)
+    return text[:RSS_ARTICLE_MAX_CHARS]
 
 
 def fetch_recent_items(hours: int = RSS_LOOKBACK_HOURS) -> list[dict]:
@@ -129,7 +148,7 @@ def fetch_recent_items(hours: int = RSS_LOOKBACK_HOURS) -> list[dict]:
                         "url": entry.get("link", ""),
                         "source": (getattr(feed.feed, "title", None) or url),
                         "published": entry.get("published", ""),
-                        # `content` rempli plus tard via fetch_article_content si besoin
+                        # `content` rempli côté generate_post via fetch_article_text (article retenu only)
                         "content": "",
                     }
                 )
@@ -143,30 +162,15 @@ def fetch_recent_items(hours: int = RSS_LOOKBACK_HOURS) -> list[dict]:
     return items
 
 
-def enrich_with_article_content(items: list[dict], max_articles: int = 5) -> list[dict]:
-    """Pour les items dont summary est vide ou trop court, WebFetch l'URL.
+def score_relevance(items: list[dict], recent_topics: list[str] | None = None) -> list[tuple[int, dict]]:
+    """Score 0-10 chaque article pour la cible PME/CTO non-tech.
 
-    On limite à max_articles pour éviter blowup latence + bandwidth.
-    """
-    enriched = 0
-    for item in items:
-        if enriched >= max_articles:
-            break
-        if len(item["summary"]) < 200 and item["url"]:
-            content = fetch_article_content(item["url"])
-            if content:
-                item["content"] = content
-                enriched += 1
-                print(f"[rss] enriched {item['url'][:60]} ({len(content)} chars)", file=sys.stderr)
-    return items
-
-
-def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
-    """Score 0-10. Barème aligné cible PME/CTO non-tech (cf. AUDIENCE_DESC dans config.py).
-
-    Priorise les sujets qui ont un angle business activable pour Victor :
-    impacts business des annonces IA, conformité (CNIL, AI Act), ROI/cas d'usage
-    entreprise, adoption IA en PME. Écarte le tech-pour-tech sans angle business.
+    Deux exigences traitées par Haiku en un seul appel :
+    (1) Actionnabilité business — tous les piliers à ÉGALITÉ (ROI/cas d'usage, pédagogie/comment-faire,
+        conformité, stratégie, vision). La conformité/CNIL n'est PAS prioritaire par défaut.
+    (2) Diversité — un article qui reprend un sujet ou un angle déjà publié (recent_topics) est scoré 0-2.
+        Haiku juge la similarité SÉMANTIQUEMENT : un dédup par mots-clés laissait passer
+        « sanction CNIL IQVIA » vs « sanction CNIL Doctolib » (même angle, mots-clés différents).
     """
     if not items:
         return []
@@ -182,6 +186,16 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
         ],
         ensure_ascii=False,
     )
+    if recent_topics:
+        recent_block = (
+            "<deja_publie_recemment>\n"
+            "Sujets/angles DÉJÀ couverts ces dernières semaines. Tout article reprenant le même sujet,\n"
+            "la même affaire OU le même angle qu'un de ces posts = score 0-2 (on ne se répète pas) :\n"
+            + "\n".join(f"- {t}" for t in recent_topics)
+            + "\n</deja_publie_recemment>\n\n"
+        )
+    else:
+        recent_block = ""
     out = call_tool(
         model=HAIKU_MODEL,
         system=[
@@ -194,31 +208,33 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
                     "</role>\n\n"
                     "<audience>\n"
                     "Dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA. "
-                    "MAJORITÉ NON TECHNIQUE. Vocabulaire BUSINESS. Sensibles : ROI, time-to-value, "
-                    "risques (coût, lock-in, hallucinations, dépendance fournisseur, "
-                    "conformité RGPD/AI Act, équipe pas formée).\n"
+                    "MAJORITÉ NON TECHNIQUE. Vocabulaire BUSINESS. Sensibles au passage à l'acte : "
+                    "ROI, time-to-value, comment s'y prendre — et aussi aux risques "
+                    "(coût, lock-in, dépendance fournisseur, conformité).\n"
                     "</audience>\n\n"
                     "<task>\n"
                     "Score chaque article selon sa capacité à devenir un post LinkedIn business "
-                    "ACTIONNABLE pour cette audience. Sois STRICT — préfère 5 articles bien scorés "
-                    "à 20 mal scorés.\n"
+                    "ACTIONNABLE pour cette audience, en VARIANT les angles d'un post à l'autre. "
+                    "Sois STRICT — préfère 5 articles bien scorés à 20 mal scorés.\n"
                     "</task>"
                 ),
                 "cache_control": {"type": "ephemeral"},
             }
         ],
         user_text=(
-            "<scoring_rubric>\n\n"
+            recent_block + "<scoring_rubric>\n\n"
             '<tier score="8-10" label="TRÈS PERTINENT">\n'
-            "- Conformité / régulation IA (CNIL, EU AI Act, RGPD + IA, certifications)\n"
+            "Article dont un dirigeant PME/CTO tire une décision ou une idée concrète après lecture.\n"
+            "Les piliers ci-dessous sont À ÉGALITÉ — aucun n'est prioritaire par défaut :\n"
             "- ROI / cas d'usage IA concret en entreprise AVEC chiffres ou bénéfices nommés\n"
-            "- Annonces produit IA majeures (OpenAI, Anthropic, Mistral) MAIS uniquement si l'article expose des IMPLICATIONS business directes pour une PME (pas juste tech-product)\n"
+            "- Pédagogie / comment-faire : intégrer un LLM, un agent, du RAG, un workflow IA — actionnable\n"
             "- Adoption IA en PME française ou européenne, retours terrain\n"
-            "- Risques IA pour les entreprises (sécu, lock-in, biais, dépendance fournisseur)\n"
+            "- Stratégie / vision IA avec parti pris exploitable (organisation, build vs buy, gouvernance)\n"
+            "- Conformité / régulation IA (CNIL, EU AI Act, RGPD) SI impact direct et décision claire\n"
+            "- Annonce produit IA (OpenAI, Anthropic, Mistral) UNIQUEMENT si implications business directes PME\n"
             "</tier>\n\n"
             '<tier score="5-7" label="PERTINENT">\n'
-            "- Annonces produit IA généralistes (besoin de pivot business par Victor pour activer)\n"
-            "- Stratégie IA en entreprise (organisation, recrutement, gouvernance)\n"
+            "- Annonces produit IA généralistes (besoin de pivot business pour activer)\n"
             "- Comparaisons d'outils IA grand public\n"
             "- Études / rapports IA business (McKinsey, BCG, Gartner) si chiffres exploitables\n"
             "</tier>\n\n"
@@ -228,44 +244,42 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
             "- Hardware (puces, datacenters)\n"
             "- Levées de fonds isolées sans angle stratégique pour la cible\n"
             "- Robotique, autonomous vehicles, vision biomédicale (hors scope)\n"
-            "- Apps grand public B2C (ChatGPT side-features) sans angle B2B\n"
-            "- Sujets non-IA (politique, économie générale) — sauf CNIL/régulation IA\n"
+            "- Apps grand public B2C sans angle B2B\n"
+            "- Sujets non-IA (politique, économie générale)\n"
+            "- Sujet ou angle DÉJÀ couvert récemment (cf. <deja_publie_recemment>)\n"
             "</tier>\n\n"
             "</scoring_rubric>\n\n"
             "<critical_trap>\n"
-            "Un article OpenAI/Anthropic n'est PAS automatiquement à 8-10. Test rapide :\n"
-            '"Un dirigeant PME français non-tech peut-il tirer une décision concrète après lecture ?"\n'
-            "Si non → 5-7 max.\n"
+            "Deux pièges symétriques :\n"
+            "1. Un article OpenAI/Anthropic n'est PAS automatiquement à 8-10. Test : "
+            '"un dirigeant PME non-tech tire-t-il une décision concrète ?" Si non → 5-7 max.\n'
+            "2. Un article conformité/CNIL n'est PAS automatiquement à 8-10 non plus. S'il reprend "
+            "un angle déjà publié (encore une sanction, encore une amende RGPD) → 0-2.\n"
             "</critical_trap>\n\n"
             "<calibration_examples>\n"
             '<example score="9">\n'
-            '  Titre: "La CNIL publie ses recommandations sur l\'IA générative pour les RH"\n'
-            "  → Conformité IA + cible RH PME directement. Décision claire après lecture.\n"
+            '  Titre: "Comment une PME de 30 personnes a automatisé son support avec un agent IA (-40% de tickets)"\n'
+            "  → Cas d'usage PME + chiffre + reproductible. Décision claire.\n"
+            "</example>\n"
+            '<example score="9">\n'
+            '  Titre: "RAG en entreprise : les 3 erreurs qui font halluciner votre assistant interne"\n'
+            "  → Pédagogie actionnable, pile sur le métier de Victor.\n"
             "</example>\n"
             '<example score="8">\n'
             '  Titre: "L\'EU AI Act entre en vigueur : ce que ça change pour les PME"\n'
-            "  → Régulation impactant directement la cible. Très actionnable.\n"
+            "  → Régulation à impact direct ET sujet non encore couvert. Actionnable.\n"
             "</example>\n"
             '<example score="7">\n'
             '  Titre: "How Virgin Atlantic ships faster with Codex"\n'
-            "  → Cas business avec ROI nommé mais cible Virgin = grande entreprise tech.\n"
-            '  Pivot possible vers PME ("que peuvent en tirer les PME ?").\n'
+            "  → Cas business avec ROI nommé mais cible grande entreprise. Pivot PME possible.\n"
             "</example>\n"
             '<example score="6">\n'
             '  Titre: "OpenAI named a Leader by Gartner in coding agents"\n'
             "  → Annonce produit nécessitant un pivot fort. Pas immédiatement actionnable.\n"
             "</example>\n"
-            '<example score="5">\n'
-            '  Titre: "Une startup française lève 50M pour son agent IA"\n'
-            '  → Levée. Pivot possible ("que faut-il regarder côté outils ?") mais limité.\n'
-            "</example>\n"
-            '<example score="3">\n'
-            '  Titre: "OpenAI partners with Dell on hybrid Codex deployment"\n'
-            "  → Partnership infra entre grandes boites. Pas pertinent PME.\n"
-            "</example>\n"
             '<example score="2">\n'
-            '  Titre: "An OpenAI model has disproved a discrete geometry conjecture"\n'
-            "  → Recherche académique pure. Aucune décision PME possible.\n"
+            '  Titre: "La CNIL inflige une amende à une nouvelle société de santé"\n'
+            "  → Encore une sanction RGPD : angle déjà couvert récemment. On ne se répète pas.\n"
             "</example>\n"
             '<example score="1">\n'
             '  Titre: "Macron annonce une rallonge budgétaire pour la défense"\n'
@@ -289,23 +303,21 @@ def score_relevance(items: list[dict]) -> list[tuple[int, dict]]:
     return sorted(zip(scores, items, strict=False), key=lambda x: x[0], reverse=True)
 
 
-def get_top_news(n: int = 5, min_score: int = 5) -> list[dict]:
-    """Top N news pertinentes (score >= min_score), enrichies avec contenu article."""
+def get_top_news(recent_topics: list[str] | None = None, n: int = 5, min_score: int = 5) -> list[dict]:
+    """Top N news pertinentes (score >= min_score), scorées sur titre + résumé RSS.
+
+    Le corps complet n'est PAS fetché ici : seul l'article finalement retenu est extrait
+    (trafilatura) côté generate_post, pour économiser latence et tokens.
+
+    Pas de fallback silencieux : si le scoring échoue (API down, schéma cassé), l'exception
+    remonte et le pipeline s'arrête bruyamment — on ne publie pas sur des articles non triés.
+    """
     items = fetch_recent_items()
     if not items:
         print("[rss] no items fetched from any source", file=sys.stderr)
         return []
 
-    # Enrichir le contenu AVANT scoring pour que Haiku ait du contexte réel
-    items = enrich_with_article_content(items, max_articles=10)
-
-    try:
-        scored = score_relevance(items)
-    except (RuntimeError, KeyError, ValueError) as e:
-        # Anthropic API down / schema mismatch / malformed response → fallback non-scored
-        print(f"[rss] scoring failed: {e} — returning unscored top items", file=sys.stderr)
-        return items[:n]
-
+    scored = score_relevance(items, recent_topics)
     relevant = [item for score, item in scored if score >= min_score][:n]
     if not relevant:
         print(
@@ -316,7 +328,10 @@ def get_top_news(n: int = 5, min_score: int = 5) -> list[dict]:
 
 
 if __name__ == "__main__":
-    news = get_top_news()
+    from config import RECENT_TOPICS_FOR_SCORING
+    from history import recent_published_topics
+
+    news = get_top_news(recent_topics=recent_published_topics(RECENT_TOPICS_FOR_SCORING))
     print(json.dumps(news, ensure_ascii=False, indent=2))
     if not news:
         sys.exit(0)

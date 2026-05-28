@@ -18,11 +18,12 @@ HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 TOKEN_BUDGETS = {
     "rss_score": 300,
+    "article_digest": 600,
     "pain": 400,
     "angle": 300,
     "architect": 900,
     "pen": 900,
-    "detector": 400,
+    "rewrite": 900,
     "hook_generator": 800,
     "hook_judge": 300,
     "comment_writer": 400,
@@ -77,7 +78,10 @@ RSS_FETCH_TIMEOUT = 10
 # Override possible via env var (ex: RSS_LOOKBACK_HOURS=168 pour test manuel).
 RSS_LOOKBACK_HOURS = int(os.environ.get("RSS_LOOKBACK_HOURS", "96"))
 RSS_ARTICLE_FETCH_TIMEOUT = 15
-RSS_ARTICLE_MAX_CHARS = 4000
+# Cap haut : l'extraction trafilatura est propre (pas de boilerplate), on garde le corps quasi entier.
+# Au-delà de GROUNDING_FULLTEXT_MAX_CHARS, on passe par un digest factuel Haiku avant les agents Sonnet.
+RSS_ARTICLE_MAX_CHARS = 12000
+GROUNDING_FULLTEXT_MAX_CHARS = 6000
 
 # ──────────────────────────────────────────────────────────────
 # Persona, audience, douleurs, vocabulaire — structuré XML pour parsing clean par Claude
@@ -401,7 +405,8 @@ GMAIL_SMTP_PORT = 587
 # Pipeline tuning
 # ──────────────────────────────────────────────────────────────
 MAX_HISTORY_DAYS = 90
-KEYWORD_OVERLAP_THRESHOLD = 0.4
+# Nb de sujets récemment publiés injectés au scorer RSS pour l'anti-répétition sémantique.
+RECENT_TOPICS_FOR_SCORING = 8
 MAX_DETECTOR_RETRIES = 2
 
 # API resilience

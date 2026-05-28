@@ -57,6 +57,17 @@ print(json.dumps(out, ensure_ascii=False))
 PY
 }
 
+# ── Verrou global : une seule instance pipeline.sh à la fois ─────────────────
+# Le cron 10h30 et le bouton dashboard "Publier maintenant" peuvent se chevaucher.
+# flock -n garantit qu'une seule publication s'exécute ; l'autre sort proprement
+# (sinon double-post possible : posted_today() ne devient vrai qu'APRÈS post+commentaire).
+LOCK_FILE="$STATE_DIR/pipeline.lock"
+exec 9>"$LOCK_FILE"
+if ! flock -n 9; then
+    log "SKIP: another pipeline.sh instance is already running (lock held)"
+    exit 0
+fi
+
 NEWS_FILE=""
 RESULT_FILE=""
 
@@ -150,41 +161,37 @@ if [ "$DRAFT_MODE" = "true" ]; then
         exit 0
     fi
 
-    # Read article + generate (with fallback to article #2)
+    # Génération sur l'article retenu par le scorer (le 1er). Pas de fallback : le scorer
+    # garantit pertinence + diversité en amont. Si la génération échoue → exit non-0 (bruyant).
     NEWS_FILE=$(mktemp "$OUTPUT_DIR/.news-XXXXXX.json")
     cp "$PENDING_ARTICLE" "$NEWS_FILE"
     rm -f "$PENDING_ARTICLE"
 
-    RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
-    GEN_SUCCESS="false"
-    for ARTICLE_IDX in 0 1; do
-        SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
-        python3 -c "
+    SINGLE_ARTICLE_FILE=$(mktemp "$OUTPUT_DIR/.single-XXXXXX.json")
+    python3 -c "
 import json, sys
 arts = json.load(open(sys.argv[1]))
-idx = int(sys.argv[2])
-print(json.dumps([arts[idx]] if idx < len(arts) else [], ensure_ascii=False))
-" "$NEWS_FILE" "$ARTICLE_IDX" > "$SINGLE_ARTICLE_FILE" 2>>"$LOG_FILE"
-        SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "0")
-        if [ "$SINGLE_COUNT" = "0" ]; then rm -f "$SINGLE_ARTICLE_FILE"; break; fi
-        ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE" 2>/dev/null || echo "?")
-        log "[draft] Trying article #$((ARTICLE_IDX+1)): $ARTICLE_TITLE"
-        if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
-            GEN_SUCCESS="true"
-            rm -f "$SINGLE_ARTICLE_FILE"
-            metric step "draft_generate" article_idx "$ARTICLE_IDX"
-            break
-        else
-            GEN_EXIT=$?
-            log "WARNING: generate failed on article #$((ARTICLE_IDX+1)) (exit $GEN_EXIT) — trying next"
-            rm -f "$SINGLE_ARTICLE_FILE"
-        fi
-    done
+print(json.dumps(arts[:1], ensure_ascii=False))
+" "$NEWS_FILE" > "$SINGLE_ARTICLE_FILE" 2>>"$LOG_FILE"
+    SINGLE_COUNT=$(python3 -c "import json,sys; print(len(json.load(open(sys.argv[1]))))" "$SINGLE_ARTICLE_FILE")
+    if [ "$SINGLE_COUNT" = "0" ]; then
+        log "ERROR: pending_article.json vide — rien à générer"
+        metric event "draft_abort" reason "empty_pending_article"
+        rm -f "$SINGLE_ARTICLE_FILE" "$NEWS_FILE"
+        exit 1
+    fi
+    ARTICLE_TITLE=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))[0]['title'][:60])" "$SINGLE_ARTICLE_FILE")
+    log "[draft] Génération sur : $ARTICLE_TITLE"
 
-    if [ "$GEN_SUCCESS" = "false" ]; then
-        log "ERROR: draft generation failed on all articles"
-        metric event "draft_abort" reason "generate_failed"
-        rm -f "$RESULT_FILE" "$NEWS_FILE"
+    RESULT_FILE=$(mktemp "$OUTPUT_DIR/.result-XXXXXX.json")
+    if python3 "$DIR/generate_post.py" < "$SINGLE_ARTICLE_FILE" > "$RESULT_FILE" 2>>"$LOG_FILE"; then
+        rm -f "$SINGLE_ARTICLE_FILE"
+        metric step "draft_generate"
+    else
+        GEN_EXIT=$?
+        log "ERROR: génération du draft échouée (exit $GEN_EXIT) — voir le log"
+        metric event "draft_abort" reason "generate_failed" exit_code "$GEN_EXIT"
+        rm -f "$SINGLE_ARTICLE_FILE" "$RESULT_FILE" "$NEWS_FILE"
         exit 1
     fi
 

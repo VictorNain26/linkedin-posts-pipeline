@@ -18,8 +18,10 @@ Patterns :
 - tool_use + JSON Schema forcé → 0 parsing libre
 - Sonnet pour créativité, Haiku pour sélection/structure → -30% tokens
 - retry-with-feedback sur Anti-AI Detector
-- dédup keyword overlap par itération sur les news RSS
-- 0 fallback silencieux : NoUsableNewsError si aucune news exploitable
+- diversité de sujet/angle gérée EN AMONT par le scorer Haiku (rss_fetch.score_relevance) —
+  pas de dédup ni de fallback ici : on génère sur l'article retenu, point
+- grounding : corps d'article extrait (trafilatura) sur l'article retenu, digest Haiku si long
+- 0 fallback silencieux : NoUsableNewsError si aucune news en entrée
 - 0 fabrication : règle FACTUAL_GROUNDING_RULES dans system block 2
 """
 
@@ -45,9 +47,9 @@ from config import (
     ANTI_AI_PATTERNS,
     CTA_POST_SUFFIX,
     CTA_SLIDE_TEXT,
+    GROUNDING_FULLTEXT_MAX_CHARS,
     HAIKU_MODEL,
     HASHTAGS,
-    KEYWORD_OVERLAP_THRESHOLD,
     MAX_DETECTOR_RETRIES,
     SLIDE_COUNT_MAX,
     SLIDE_COUNT_MIN,
@@ -56,7 +58,8 @@ from config import (
     TOKEN_BUDGETS,
 )
 from format_selector import select_format
-from history import keyword_overlap_ratio
+from history import recent_winning_hooks
+from rss_fetch import fetch_article_text
 
 # Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
 __all__ = [
@@ -98,15 +101,27 @@ def agent1_pain_excavator(article_ctx: str) -> list[str]:
     return out["pains"]
 
 
-def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
+def agent2_angle_scout(article_ctx: str, pains: list[str], recent_hooks: list[str] | None = None) -> dict:
     """Trouve un angle éditorial business, ancré sur les douleurs prospect."""
+    recent_block = ""
+    if recent_hooks:
+        recent_block = (
+            "<recent_hooks_to_avoid>\n"
+            "Accroches des derniers posts publiés. Ton angle doit être DISTINCT : autre douleur, "
+            "autre formulation, autre porte d'entrée. Ne recycle ni le même verbe d'attaque ni le même schéma.\n"
+            + "\n".join(f"- {h}" for h in recent_hooks)
+            + "\n</recent_hooks_to_avoid>\n\n"
+        )
     return call_tool(
         model=SONNET_MODEL,
         system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            "<pains_identified>\n" + "\n".join(f"- {p}" for p in pains) + "\n</pains_identified>\n\n"
-            "<task>\n"
+            "<pains_identified>\n"
+            + "\n".join(f"- {p}" for p in pains)
+            + "\n</pains_identified>\n\n"
+            + recent_block
+            + "<task>\n"
             "Trouve l'angle éditorial UNIQUE de ce post pour la cible PME/CTO non-tech.\n"
             "L'angle doit faire 3 choses simultanément :\n"
             "1. COMMENTER l'article (l'article reste la source factuelle — pas d'invention)\n"
@@ -118,6 +133,15 @@ def agent2_angle_scout(article_ctx: str, pains: list[str]) -> dict:
             "NE DOIT PAS rester sur le terrain tech. Il doit PIVOTER vers le terrain business.\n"
             "Le PDG d'usine 50 personnes doit reconnaître SA douleur dans ton angle.\n"
             "</critical>\n\n"
+            "<positioning_anchor>\n"
+            "Victor est INTÉGRATEUR IA — son audience le suit pour ça. Si l'article n'est PAS\n"
+            "directement sur l'IA (ex : conformité/RGPD/CNIL, cloud, cybersécurité, organisation,\n"
+            "management), ton angle DOIT créer un PONT EXPLICITE vers l'intégration IA. Sans ce fil\n"
+            "IA, le post brouille le positionnement (et les hashtags #IA deviennent mensongers).\n"
+            "Ponts types : « tes agents IA tournent chez un fournisseur tiers », « l'IA que tu\n"
+            "déploies traite des données clients », « avant d'automatiser avec l'IA, qui est\n"
+            "responsable ? ». Si l'article EST déjà sur l'IA, ignore ce bloc.\n"
+            "</positioning_anchor>\n\n"
             "<bad_examples>\n"
             '<bad_angle>"OpenAI lance Codex. Il automatise la production de code."</bad_angle>\n'
             "  → Reste tech, ne parle d'aucune douleur business.\n"
@@ -204,8 +228,8 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
         for i, s in enumerate(slides_outline)
     )
     out = call_tool(
-        model=HAIKU_MODEL,
-        system=_system_with_learnings(HAIKU_MODEL),
+        model=SONNET_MODEL,
+        system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
             "<task>\n"
@@ -315,7 +339,7 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
                 "Draft actuel :\n" + outline_str
             ),
             tool=SLIDES_TOOL,
-            max_tokens=TOKEN_BUDGETS["detector"],
+            max_tokens=TOKEN_BUDGETS["rewrite"],
         )
         current = out["slides"]
     return current
@@ -326,7 +350,6 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
     Détecte les affirmations inventées ou extrapolées non présentes dans l'article.
     Si violations trouvées : Sonnet réécrit les slides fautives (1 tentative)."""
     slides_text = "\n".join(f"S{i + 1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides))
-    article_ctx_short = article_ctx[:1500] + ("…" if len(article_ctx) > 1500 else "")
     out = call_tool(
         model=HAIKU_MODEL,
         system=[
@@ -343,7 +366,7 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
             }
         ],
         user_text=(
-            f"{article_ctx_short}\n\n"
+            f"{article_ctx}\n\n"
             "<slides_to_verify>\n" + slides_text + "\n</slides_to_verify>\n\n"
             "<task>Compare chaque fait/chiffre des slides à l'article. "
             "Si tout est sourcé dans l'article : clean=true, violations=[]. "
@@ -378,7 +401,7 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
             "Slides à corriger :\n" + outline_str
         ),
         tool=SLIDES_TOOL,
-        max_tokens=TOKEN_BUDGETS["detector"],
+        max_tokens=TOKEN_BUDGETS["rewrite"],
     )
     return fixed["slides"]
 
@@ -704,26 +727,114 @@ def _normalize_news_input(topic_input) -> list[dict]:
     return []
 
 
-def _run_once(article_ctx: str) -> tuple[list[dict], dict]:
+DIGEST_TOOL = {
+    "name": "submit_article_digest",
+    "description": "Soumet un brief factuel de l'article : faits verbatim + thèse, sans interprétation.",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "thesis": {
+                "type": "string",
+                "description": "Thèse centrale de l'article en 1-2 phrases factuelles (zéro interprétation).",
+            },
+            "facts": {
+                "type": "array",
+                "description": (
+                    "Faits saillants VERBATIM de l'article : chiffres, pourcentages, dates, "
+                    "entités nommées, citations clés. Recopie les nombres exactement."
+                ),
+                "items": {"type": "string"},
+            },
+        },
+        "required": ["thesis", "facts"],
+    },
+}
+
+
+def _article_digest(title: str, clean_text: str) -> str:
+    """Brief factuel Haiku d'un article long : extraction stricte (chiffres/entités verbatim).
+
+    Réduit les tokens facturés aux agents Sonnet sans perdre les faits. En cas d'échec API,
+    le caller bascule sur le texte tronqué (pas de fabrication, pas de plantage).
+    """
+    out = call_tool(
+        model=HAIKU_MODEL,
+        system=[
+            {
+                "type": "text",
+                "text": (
+                    "Tu extrais un brief FACTUEL d'un article pour qu'un rédacteur s'appuie dessus. "
+                    "Règles strictes : recopie chiffres, pourcentages, dates, noms d'entreprises et "
+                    "citations EXACTEMENT comme dans l'article. N'interprète pas, n'extrapole pas, "
+                    "n'ajoute aucun élément absent du texte."
+                ),
+                "cache_control": {"type": "ephemeral"},
+            }
+        ],
+        user_text=(
+            f"<titre>{title}</titre>\n\n<article>\n{clean_text}\n</article>\n\n"
+            "<task>Extrais la thèse centrale + tous les faits saillants verbatim (chiffres, %, "
+            "entités, dates, citations). Priorité aux éléments activables pour un post business.</task>"
+        ),
+        tool=DIGEST_TOOL,
+        max_tokens=TOKEN_BUDGETS["article_digest"],
+    )
+    facts = out.get("facts", [])
+    thesis = (out.get("thesis") or "").strip()
+    lines: list[str] = []
+    if thesis:
+        lines.append(f"Thèse : {thesis}")
+    if facts:
+        lines.append("Faits clés (verbatim de l'article) :")
+        lines.extend(f"- {f}" for f in facts)
+    return "\n".join(lines)
+
+
+def _build_grounding_context(news: dict, clean_text: str) -> str:
+    """Contexte de grounding fourni aux agents créatifs (Sonnet).
+
+    - Article court (≤ seuil) → texte intégral propre (fidélité max, tokens raisonnables).
+    - Article long (> seuil)  → digest factuel Haiku (faits verbatim, ~3-4x moins de tokens Sonnet).
+    - Pas de corps (fetch échoué) → fallback résumé RSS via _article_context.
+    """
+    grounding_news = dict(news)
+    if clean_text and len(clean_text) > GROUNDING_FULLTEXT_MAX_CHARS:
+        try:
+            digest = _article_digest((news.get("title") or "").strip(), clean_text)
+        except (RuntimeError, KeyError, ValueError, TypeError) as e:
+            print(f"[digest] échec, fallback texte tronqué: {e}", file=sys.stderr)
+            digest = ""
+        grounding_news["content"] = digest or clean_text[:GROUNDING_FULLTEXT_MAX_CHARS]
+    else:
+        grounding_news["content"] = clean_text
+    return _article_context(grounding_news)
+
+
+def _run_once(
+    grounding_ctx: str, factcheck_ctx: str, recent_hooks: list[str] | None = None
+) -> tuple[list[dict], dict]:
     print("[agent1] Pain excavator…", file=sys.stderr)
-    pains = agent1_pain_excavator(article_ctx)
+    pains = agent1_pain_excavator(grounding_ctx)
     print("[agent2] Angle scout…", file=sys.stderr)
-    angle = agent2_angle_scout(article_ctx, pains)
+    angle = agent2_angle_scout(grounding_ctx, pains, recent_hooks)
     print("[agent3] Slide architect…", file=sys.stderr)
-    outline = agent3_slide_architect(article_ctx, angle)
+    outline = agent3_slide_architect(grounding_ctx, angle)
     print("[agent4] Victor's pen…", file=sys.stderr)
-    draft = agent4_victors_pen(article_ctx, outline)
+    draft = agent4_victors_pen(grounding_ctx, outline)
     print("[agent5] Anti-AI detector (string + semantic)…", file=sys.stderr)
     cleaned = agent5_anti_ai_detector(draft)
-    print("[agent5b] Factual check (slides vs article)…", file=sys.stderr)
-    final = agent5b_factual_check(article_ctx, cleaned)
+    print("[agent5b] Factual check (slides vs article complet)…", file=sys.stderr)
+    final = agent5b_factual_check(factcheck_ctx, cleaned)
     return final, angle
 
 
 def generate(topic_input=None) -> dict:
-    """
-    Génère un post à partir d'une OU plusieurs news RSS.
-    Aucun fallback silencieux : si aucune news n'est exploitable, raise NoUsableNewsError.
+    """Génère un post à partir de l'article retenu par le scorer (le 1er de l'entrée).
+
+    Pas de fallback : pertinence ET diversité (pas de doublon de sujet/angle) sont garanties
+    en amont par le scorer Haiku (rss_fetch.score_relevance). Si la chaîne d'agents échoue,
+    l'exception remonte et le pipeline s'arrête bruyamment — on ne se rabat pas sur un
+    article de secours.
     """
     reset_run_usage()
     news_list = _normalize_news_input(topic_input)
@@ -733,47 +844,23 @@ def generate(topic_input=None) -> dict:
             "Vérifie les sources RSS dans config.RSS_SOURCES ou réessaie plus tard."
         )
 
-    last_error: str | None = None
-    slides: list[dict] = []
-    angle: dict = {}
-    keywords: list[str] = []
-    topic: str = ""
-    article_ctx_winner = ""
-    winner_news: dict = {}
+    winner_news = news_list[0]
+    topic = _news_to_topic(winner_news)
+    recent_hooks = recent_winning_hooks()
 
-    for idx, news in enumerate(news_list):
-        topic = _news_to_topic(news)
-        article_ctx = _article_context(news)
-        print(f"[generate] trying news {idx + 1}/{len(news_list)}: {topic[:80]}", file=sys.stderr)
-        try:
-            slides, angle = _run_once(article_ctx)
-        except (RuntimeError, KeyError, ValueError, TypeError) as e:
-            # Anthropic API en échec ou retour mal formé (schema mismatch) → on essaie la news suivante
-            last_error = f"news {idx}: {e}"
-            print(f"[generate] run failed on news {idx + 1}: {e}", file=sys.stderr)
-            continue
+    print(f"[generate] article retenu : {topic[:80]}", file=sys.stderr)
+    clean_text = fetch_article_text(winner_news.get("url", ""))
+    if clean_text:
+        print(f"[generate] article body extracted ({len(clean_text)} chars)", file=sys.stderr)
+    grounding_ctx_winner = _build_grounding_context(winner_news, clean_text)
+    factcheck_ctx = _article_context({**winner_news, "content": clean_text})
+    slides, angle = _run_once(grounding_ctx_winner, factcheck_ctx, recent_hooks)
 
-        keywords = extract_keywords(topic, slides)
-        overlap = keyword_overlap_ratio(keywords)
-        if overlap < KEYWORD_OVERLAP_THRESHOLD:
-            print(f"[generate] news {idx + 1} accepted (overlap={overlap:.2f})", file=sys.stderr)
-            article_ctx_winner = article_ctx
-            winner_news = news
-            break
-        print(
-            f"[dedup] news {idx + 1} overlap={overlap:.2f} ≥ {KEYWORD_OVERLAP_THRESHOLD}, trying next",
-            file=sys.stderr,
-        )
-        last_error = f"news {idx} too similar to recent (overlap={overlap:.2f})"
-    else:
-        raise NoUsableNewsError(
-            f"Aucune des {len(news_list)} news RSS n'est exploitable. Dernier motif : {last_error}"
-        )
-
+    keywords = extract_keywords(topic, slides)
     slides = ensure_cta(slides)
 
     print("[agent6] Hook generator (3 variants)…", file=sys.stderr)
-    variants = agent6_hook_generator(article_ctx_winner, angle, slides)
+    variants = agent6_hook_generator(grounding_ctx_winner, angle, slides)
 
     print("[agent7] Hook judge…", file=sys.stderr)
     judge = agent7_hook_judge(topic, variants, angle)

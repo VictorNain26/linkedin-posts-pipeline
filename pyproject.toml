@@ -13,6 +13,8 @@ dependencies = [
     "anthropic>=0.101.0",
     "feedparser>=6.0.12",
     "requests>=2.34.0",
+    # Extraction du corps d'article (sans boilerplate) pour le grounding factuel des agents
+    "trafilatura>=2.0.0",
     "python-dotenv>=1.2.2",
     # Dashboard Streamlit + analytics
     "streamlit>=1.35.0",
