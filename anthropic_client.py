@@ -28,6 +28,7 @@ class TruncatedToolUseError(RuntimeError):
     Renvoyer ce dict partiel ferait sauter un KeyError opaque chez l'appelant —
     on lève explicitement pour que le budget soit corrigé ou la news suivante tentée."""
 
+
 # Prix par million de tokens (USD) — Anthropic mai 2026
 _PRICING: dict[str, dict[str, float]] = {
     "claude-sonnet-4-6": {"in": 3.0, "out": 15.0, "cache_write": 3.75, "cache_read": 0.30},
