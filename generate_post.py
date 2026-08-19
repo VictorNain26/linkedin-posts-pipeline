@@ -1,18 +1,29 @@
 """
-Pipeline 8 agents — génère slides carousel + hook + 1er commentaire LinkedIn.
+Pipeline d'agents — génère un post LinkedIn (carrousel OU text long) + hook + 1er commentaire.
 
-100% evergreen orienté prospect PME / CTO décisionnaire.
+100% evergreen orienté prospect fondateur/CTO de startup et PME tech FR.
 Pipeline ancré sur l'actualité IA (RSS) avec angle BUSINESS systématique.
+
+Le FORMAT est décidé AVANT la génération (select_format) et branche le chemin :
+- carousel : agents 1→2→3→4→5→5b→6→7→8 (chemin historique)
+- text     : agents 1→2→Text Writer→5→5b→6→7→8 (corps 700-1200 chars, pas de slides)
+
+Le REGISTRE éditorial tourne entre pain / pedagogie / preuve (select_registre) :
+- pain      : mise en garde contrarian ancrée douleur
+- pedagogie : comment-faire actionnable
+- preuve    : retour terrain 1re personne, ancré sur victor_stories.json (jamais inventé)
 
 Agents :
   1. Pain Excavator        (Sonnet) — 3 douleurs prospect
-  2. Angle Scout           (Sonnet) — angle contre-intuitif + hook visuel slide 1
-  3. Slide Architect       (Sonnet) — structure les slides (5-10, variable)
-  4. Victor's Pen          (Sonnet) — réécrit dans la voix de Victor
+  2. Angle Scout           (Sonnet) — angle selon registre + hook visuel + choix de story
+  3. Slide Architect       (Sonnet) — structure les slides (5-10, kinds standard/list/number)
+  T. Text Writer           (Sonnet) — corps du post text-only (si format=text)
+  4. Victor's Pen          (Sonnet) — réécrit dans la voix de Victor (carousel)
   5. Anti-AI Detector      (Sonnet) — retry-with-feedback sur patterns interdits
-  6. Hook Generator        (Sonnet) — 3 variations de hook texte
-  7. Hook Judge            (Haiku)  — sélectionne le winner
-  8. CTA Comment           (Haiku)  — 1er commentaire CTA (action + bénéfice + lien)
+  5b. Factual Check        (Haiku)  — cross-check faits vs article (+ story si preuve)
+  6. Hook Generator        (Sonnet) — 3 variations hook + body_lines
+  7. Hook Judge            (Haiku)  — winner avec formule cible (rotation honnête)
+  8. First Comment         (Haiku)  — pitch CTA (1 post /3) ou complément de valeur
 
 Patterns :
 - tool_use + JSON Schema forcé → 0 parsing libre
@@ -22,7 +33,7 @@ Patterns :
   pas de dédup ni de fallback ici : on génère sur l'article retenu, point
 - grounding : corps d'article extrait (trafilatura) sur l'article retenu, digest Haiku si long
 - 0 fallback silencieux : NoUsableNewsError si aucune news en entrée
-- 0 fabrication : règle FACTUAL_GROUNDING_RULES dans system block 2
+- 0 fabrication : règle FACTUAL_GROUNDING_RULES dans system block 2 + banque de stories réelles
 """
 
 import json
@@ -38,27 +49,37 @@ from agents import (
     HOOK_VARIANTS_TOOL,
     PAIN_TOOL,
     SLIDES_TOOL,
+    TEXT_BODY_TOOL,
     VIOLATIONS_TOOL,
     _load_learnings_block,
     _system_with_learnings,
+    get_story,
+    load_stories,
+    stories_index_block,
+    story_block,
 )
 from anthropic_client import call_tool, get_run_usage_summary, get_run_usage_totals, reset_run_usage
 from config import (
     ANTI_AI_PATTERNS,
-    CTA_POST_SUFFIX,
-    CTA_SLIDE_TEXT,
+    FORMAT_CAROUSEL,
     GROUNDING_FULLTEXT_MAX_CHARS,
     HAIKU_MODEL,
-    HASHTAGS,
+    HOOK_FORMULAS,
     MAX_DETECTOR_RETRIES,
+    REGISTRE_PAIN,
+    REGISTRE_PEDAGOGIE,
+    REGISTRE_PREUVE,
     SLIDE_COUNT_MAX,
     SLIDE_COUNT_MIN,
     SLIDE_COUNT_TARGET,
     SONNET_MODEL,
     TOKEN_BUDGETS,
+    cta_post_suffix_for,
+    cta_slide_for,
+    hashtags_for,
 )
-from format_selector import select_format
-from history import recent_winning_hooks
+from format_selector import select_format, select_registre
+from history import published_count, recent_winner_formulas, recent_winning_hooks
 from rss_fetch import fetch_article_text
 
 # Re-exports pour rétrocompat (tests, scripts externes qui importeraient depuis generate_post)
@@ -101,8 +122,50 @@ def agent1_pain_excavator(article_ctx: str) -> list[str]:
     return out["pains"]
 
 
-def agent2_angle_scout(article_ctx: str, pains: list[str], recent_hooks: list[str] | None = None) -> dict:
-    """Trouve un angle éditorial business, ancré sur les douleurs prospect."""
+_REGISTRE_TASKS = {
+    REGISTRE_PAIN: (
+        '<task registre="pain">\n'
+        "Trouve l'angle MISE EN GARDE unique de ce post.\n"
+        "L'angle doit faire 3 choses simultanément :\n"
+        "1. COMMENTER l'article (l'article reste la source factuelle — pas d'invention)\n"
+        "2. PARLER à AU MOINS UNE des douleurs ci-dessus, dans le vocabulaire de la cible\n"
+        "3. SURPRENDRE ou contredire une idée reçue largement répandue chez les fondateurs/CTOs\n"
+        "</task>\n"
+    ),
+    REGISTRE_PEDAGOGIE: (
+        '<task registre="pedagogie">\n'
+        "Trouve l'angle COMMENT-FAIRE unique de ce post. Pas de mise en garde, pas de peur :\n"
+        "le lecteur doit repartir avec une démarche ou une grille de lecture utilisable.\n"
+        "L'angle doit faire 3 choses simultanément :\n"
+        "1. COMMENTER l'article (source factuelle unique — pas d'invention)\n"
+        "2. EXTRAIRE la démarche actionnable : comment s'y prendre, par quoi commencer,\n"
+        "   comment décider (build vs buy, quel périmètre, quelles étapes)\n"
+        "3. DONNER ENVIE d'essayer — le ton est constructif, pas alarmiste\n"
+        "</task>\n"
+    ),
+    REGISTRE_PREUVE: (
+        '<task registre="preuve">\n'
+        "Trouve l'angle RETOUR TERRAIN unique de ce post : l'article sert de déclencheur,\n"
+        "et UNE expérience réelle de Victor (cf. <victor_stories_index>) sert de preuve.\n"
+        "L'angle doit faire 3 choses simultanément :\n"
+        "1. RELIER l'article à l'expérience choisie (story_id) — lien NATUREL, pas forcé\n"
+        "2. RACONTER ce que Victor a vu/fait sur le terrain (les faits de la story, fidèlement)\n"
+        "3. EN TIRER une leçon transférable pour le lecteur\n"
+        'Si AUCUNE story ne colle naturellement à l\'article : story_id="" — le post basculera\n'
+        "en mode comment-faire, c'est préférable à un lien artificiel.\n"
+        "</task>\n"
+    ),
+}
+
+
+def agent2_angle_scout(
+    article_ctx: str,
+    pains: list[str],
+    recent_hooks: list[str] | None = None,
+    registre: str = REGISTRE_PAIN,
+    stories: list[dict] | None = None,
+) -> dict:
+    """Trouve un angle éditorial business selon le registre, ancré sur les douleurs prospect."""
     recent_block = ""
     if recent_hooks:
         recent_block = (
@@ -112,6 +175,9 @@ def agent2_angle_scout(article_ctx: str, pains: list[str], recent_hooks: list[st
             + "\n".join(f"- {h}" for h in recent_hooks)
             + "\n</recent_hooks_to_avoid>\n\n"
         )
+    stories_block_txt = ""
+    if registre == REGISTRE_PREUVE and stories:
+        stories_block_txt = stories_index_block(stories) + "\n\n"
     return call_tool(
         model=SONNET_MODEL,
         system=_system_with_learnings(),
@@ -121,46 +187,51 @@ def agent2_angle_scout(article_ctx: str, pains: list[str], recent_hooks: list[st
             + "\n".join(f"- {p}" for p in pains)
             + "\n</pains_identified>\n\n"
             + recent_block
-            + "<task>\n"
-            "Trouve l'angle éditorial UNIQUE de ce post pour la cible PME/CTO non-tech.\n"
-            "L'angle doit faire 3 choses simultanément :\n"
-            "1. COMMENTER l'article (l'article reste la source factuelle — pas d'invention)\n"
-            "2. PARLER à AU MOINS UNE des douleurs ci-dessus, dans le vocabulaire de la cible\n"
-            "3. SURPRENDRE ou contredire une idée reçue largement répandue chez les décideurs\n"
-            "</task>\n\n"
-            "<critical>\n"
-            "PIÈGE PRINCIPAL : l'article peut être très tech (Codex, GPT-5, API). Ton angle\n"
+            + stories_block_txt
+            + _REGISTRE_TASKS[registre]
+            + "\n<critical>\n"
+            "PIÈGE 1 : l'article peut être très tech (Codex, GPT-5, API). Ton angle\n"
             "NE DOIT PAS rester sur le terrain tech. Il doit PIVOTER vers le terrain business.\n"
-            "Le PDG d'usine 50 personnes doit reconnaître SA douleur dans ton angle.\n"
+            "Un fondateur de startup produit, pas expert IA, doit reconnaître SA douleur.\n"
+            "PIÈGE 2 : l'AUDIENCE DU POST RESTE LA CIBLE (fondateurs/CTOs de startups et PME\n"
+            "tech FR), PAS l'audience de l'article. Un article écrit pour des investisseurs,\n"
+            "des RH ou des devs ne change pas à qui TU parles.\n"
+            "<bad_angle>\"Un chiffre inventé dans un mémo d'investissement : la crédibilité\n"
+            "auprès des LP part avec.\" → parle aux fonds d'investissement, pas à la cible.</bad_angle>\n"
+            "<good_angle>\"L'IA accélère l'analyse de dossiers chez les investisseurs. La même\n"
+            'mécanique vaut pour VOS devis : qui vérifie ce que le modèle sort ?" → ramène\n'
+            "le sujet de l'article vers la cible.</good_angle>\n"
             "</critical>\n\n"
             "<positioning_anchor>\n"
             "Victor est INTÉGRATEUR IA — son audience le suit pour ça. Si l'article n'est PAS\n"
             "directement sur l'IA (ex : conformité/RGPD/CNIL, cloud, cybersécurité, organisation,\n"
             "management), ton angle DOIT créer un PONT EXPLICITE vers l'intégration IA. Sans ce fil\n"
             "IA, le post brouille le positionnement (et les hashtags #IA deviennent mensongers).\n"
-            "Ponts types : « tes agents IA tournent chez un fournisseur tiers », « l'IA que tu\n"
-            "déploies traite des données clients », « avant d'automatiser avec l'IA, qui est\n"
+            "Ponts types : « vos agents IA tournent chez un fournisseur tiers », « l'IA que vous\n"
+            "déployez traite des données clients », « avant d'automatiser avec l'IA, qui est\n"
             "responsable ? ». Si l'article EST déjà sur l'IA, ignore ce bloc.\n"
             "</positioning_anchor>\n\n"
             "<bad_examples>\n"
             '<bad_angle>"OpenAI lance Codex. Il automatise la production de code."</bad_angle>\n'
             "  → Reste tech, ne parle d'aucune douleur business.\n"
-            '<bad_angle>"Les meilleurs devs adoptent Codex. Pas les autres."</bad_angle>\n'
-            "  → Touche les devs, pas le décideur PME non-tech.\n"
             '<bad_angle>"L\'IA va remplacer 30% des développeurs."</bad_angle>\n'
             "  → Prédiction non sourcée + clivant sans valeur ajoutée.\n"
             "</bad_examples>\n\n"
             "<good_examples>\n"
-            "<good_angle>\"Un label Gartner 'leader' ne te dit pas combien ça coûte chez toi.\"</good_angle>\n"
+            '<good_angle registre="pain">"Un label Gartner \'leader\' ne vous dit pas combien ça coûte chez vous."</good_angle>\n'
             "  → Pivote du fait tech (classement) vers la douleur budget.\n"
-            "<good_angle>\"L'outil change. Pas le vrai problème : qui l'installe et le maintient ?\"</good_angle>\n"
-            "  → Pivote vers la douleur dépendance prestataire + mise en prod fragile.\n"
-            "<good_angle>\"Tu signes pour Codex aujourd'hui. Tu changes d'avis dans 18 mois ?\"</good_angle>\n"
+            '<good_angle registre="pain">"Vous signez pour Codex aujourd\'hui. Vous changez d\'avis dans 18 mois ?"</good_angle>\n'
             "  → Pivote vers la douleur lock-in fournisseur.\n"
+            '<good_angle registre="pedagogie">"Avant de brancher l\'IA sur votre support : 3 étapes que cet article confirme."</good_angle>\n'
+            "  → Démarche actionnable tirée de l'article, ton constructif.\n"
+            '<good_angle registre="pedagogie">"Build ou buy pour votre agent IA ? L\'article donne un critère simple : le volume."</good_angle>\n'
+            "  → Grille de décision utilisable tout de suite.\n"
+            '<good_angle registre="preuve">"Cet article annonce -40% de tickets avec un agent IA. J\'ai vu le même chiffre chez un client — mais pas là où on l\'attendait."</good_angle>\n'
+            "  → Article = déclencheur, expérience réelle = preuve, leçon transférable.\n"
             "</good_examples>\n\n"
             "<hook_visual_constraints>\n"
             "Hook slide 1 : 1 phrase MAX 8 mots, percutante, vue mobile.\n"
-            '- Interpelle le décideur directement ("Tu", "Ton", verbe d\'action)\n'
+            '- Interpelle le décideur directement ("Vous", "Votre", verbe d\'action) — VOUVOIEMENT\n'
             "- N'inclut PAS le nom de Victor\n"
             "- N'inclut PAS de jargon tech non traduit\n"
             "</hook_visual_constraints>"
@@ -170,7 +241,35 @@ def agent2_angle_scout(article_ctx: str, pains: list[str], recent_hooks: list[st
     )
 
 
-def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
+_REGISTRE_MIDDLE_SLIDES = {
+    REGISTRE_PAIN: (
+        "- Slides intermédiaires (3 à n-2) : implications business pour le décideur — "
+        "ROI, coût, risque, équipe, conformité, lock-in, time-to-value\n"
+    ),
+    REGISTRE_PEDAGOGIE: (
+        "- Slides intermédiaires (3 à n-2) : la DÉMARCHE, étape par étape ou critère par "
+        "critère — chaque slide fait avancer le lecteur vers 'je sais par quoi commencer'\n"
+    ),
+    REGISTRE_PREUVE: (
+        "- Slides intermédiaires (3 à n-2) : le récit terrain — situation de départ, ce qui "
+        "a été fait, ce qui a surpris, le résultat chiffré (UNIQUEMENT les faits de "
+        "<victor_story>), puis la leçon transférable\n"
+    ),
+}
+
+# Cadres actionnables à faire tourner — l'avant-dernière slide était devenue
+# "3 questions à poser avant de..." sur 3 posts consécutifs (moule visible).
+_ACTIONABLE_FRAMINGS = (
+    "VARIE le cadre actionnable d'un post à l'autre : checklist de critères, erreurs à "
+    "éviter, arbre de décision simple (si X → fais Y), ordre de priorité, signal d'alerte "
+    "à surveiller. Le moule '3 questions à poser avant de signer' a déjà beaucoup servi — "
+    "ne l'utilise que s'il est VRAIMENT le meilleur format pour cette matière."
+)
+
+
+def agent3_slide_architect(
+    article_ctx: str, angle: dict, registre: str = REGISTRE_PAIN, cta_slide_text: str = ""
+) -> list[dict]:
     """Structure les slides en commentant l'article pour le décideur."""
     out = call_tool(
         model=SONNET_MODEL,
@@ -178,6 +277,7 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
         user_text=(
             f"{article_ctx}\n\n"
             f"<context>\n"
+            f"Registre éditorial : {registre}\n"
             f"Angle retenu : {angle['angle']}\n"
             f"Hook slide 1 (à reprendre exactement) : {angle['hook']}\n"
             f"</context>\n\n"
@@ -193,26 +293,34 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
             f"<structure_template>\n"
             f"- Slide 1 : reprend EXACTEMENT le hook visuel fourni\n"
             f"- Slide 2 : résumé factuel de l'article en 1 phrase clé (zéro invention)\n"
-            f"- Slides intermédiaires (3 à n-1) : implications business pour le décideur — "
-            f"ROI, coût, risque, équipe, conformité, lock-in, time-to-value\n"
-            f"- Avant-dernière slide : recommandation actionnable (cadre de décision, 3 questions à poser, "
-            f"checklist de 3-5 items, etc.)\n"
-            f"- DERNIÈRE slide : CTA — DOIT contenir le texte '{CTA_SLIDE_TEXT}'\n"
+            + _REGISTRE_MIDDLE_SLIDES[registre]
+            + f"- Avant-dernière slide : recommandation actionnable. {_ACTIONABLE_FRAMINGS}\n"
+            f"- DERNIÈRE slide : CTA — DOIT contenir le texte '{cta_slide_text}'\n"
             f"</structure_template>\n\n"
+            "<slide_kinds>\n"
+            "- kind=list pour toute énumération (checklist, questions, étapes) : main = titre, "
+            "items = les entrées. NE JAMAIS écraser une liste dans le champ sub.\n"
+            "- kind=number quand UN chiffre de l'article mérite d'être le héros de la slide : "
+            "main = le chiffre seul ('2 M', '-40%'), sub = ce qu'il signifie pour le lecteur.\n"
+            "- kind=standard pour le reste. Mets en **gras** le ou les 1-2 mots pivots du main.\n"
+            "- Vise 1-2 slides list/number par carrousel quand la matière s'y prête (rythme visuel).\n"
+            "</slide_kinds>\n\n"
             "<slide_rules>\n"
             "- 1 slide = 1 idée. Pas plus.\n"
             "- main = phrase punchy (15 mots max). sub = développement court (optionnel).\n"
             "- Carrousel COURT et DENSE > long et délayé. Si un point manque de fact, retire la slide.\n"
-            "- Chiffres uniquement si présents dans l'article source. Jamais inventés.\n"
+            "- Chiffres uniquement si présents dans l'article source (ou <victor_story>). Jamais inventés.\n"
             "</slide_rules>\n\n"
             "<bad_examples>\n"
-            '<bad_slide>"L\'IA va révolutionner ton business !" (cliché vide, pas de fact ancré)</bad_slide>\n'
+            '<bad_slide>"L\'IA va révolutionner votre business !" (cliché vide, pas de fact ancré)</bad_slide>\n'
             '<bad_slide>"73% des PME perdent 4h/semaine" (chiffre fabriqué non sourcé article)</bad_slide>\n'
-            '<bad_slide>"Mardi dernier, j\'ai vu un client..." (anecdote inventée)</bad_slide>\n'
+            '<bad_slide>"Mardi dernier, j\'ai vu un client..." (anecdote hors <victor_story>)</bad_slide>\n'
+            '<bad_slide>main: "3 questions à poser." sub: "1. Qui est responsable ? 2. Où vont les données ? 3. Qui prévient ?" (liste écrasée dans sub → kind=list avec items)</bad_slide>\n'
             "</bad_examples>\n\n"
             "<good_examples>\n"
-            '<good_slide>main: "La CNIL contrôle les pratiques, pas les intentions." sub: "Bug fournisseur, erreur de config : peu importe. Ton périmètre, tes données."</good_slide>\n'
-            '<good_slide>main: "3 questions à poser avant de signer." sub: "Qui est responsable de traitement ? Où vont les données ? Qui prévient la CNIL ?"</good_slide>\n'
+            '<good_slide>kind: "standard", main: "La CNIL contrôle les **pratiques**, pas les intentions." sub: "Bug fournisseur, erreur de config : peu importe. Votre périmètre, vos données."</good_slide>\n'
+            '<good_slide>kind: "list", main: "Avant de signer, vérifie :", items: ["Qui est responsable de traitement ?", "Où vont les données ?", "Qui prévient la CNIL ?"]</good_slide>\n'
+            '<good_slide>kind: "number", main: "2 M", sub: "d\'appels traités chaque mois par leur standard IA. Si ça s\'arrête, votre accueil aussi."</good_slide>\n'
             "</good_examples>"
         ),
         tool=SLIDES_TOOL,
@@ -221,12 +329,30 @@ def agent3_slide_architect(article_ctx: str, angle: dict) -> list[dict]:
     return out["slides"]
 
 
+def _outline_str(slides: list[dict]) -> str:
+    """Sérialise les slides (kind/main/sub/items) pour les prompts de réécriture."""
+    lines = []
+    for i, s in enumerate(slides):
+        parts = [f"Slide {i + 1} [{s.get('kind', 'standard')}] — main: {s['main']}"]
+        if s.get("sub"):
+            parts.append(f"sub: {s['sub']}")
+        if s.get("items"):
+            parts.append("items: " + " ; ".join(s["items"]))
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+def _slides_text(slides: list[dict]) -> str:
+    """Texte brut des slides (pour détecteurs)."""
+    return "\n".join(
+        f"S{i + 1}: {s['main']} {s.get('sub', '')} {' '.join(s.get('items', []))}".strip()
+        for i, s in enumerate(slides)
+    )
+
+
 def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dict]:
     """Réécrit dans la voix de Victor SANS introduire d'invention."""
-    outline_str = "\n".join(
-        f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
-        for i, s in enumerate(slides_outline)
-    )
+    outline_str = _outline_str(slides_outline)
     out = call_tool(
         model=SONNET_MODEL,
         system=_system_with_learnings(),
@@ -237,14 +363,18 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
             "Tu es un ré-écrivain, pas un créatif : tu changes le phrasé, pas le fond.\n"
             "</task>\n\n"
             "<preserve>\n"
-            "- Structure : même nombre de slides, même ordre\n"
+            "- Structure : même nombre de slides, même ordre, mêmes kind et items "
+            "(réécris le phrasé des items, pas leur nombre)\n"
+            "- Les marqueurs **gras** sur les mots pivots (déplace-les si ta reformulation "
+            "change le mot pivot, mais garde 1-2 par slide standard)\n"
             "- Angle, hook slide 1, CTA final : intacts\n"
-            "- Faits de l'article source : seule source factuelle autorisée\n"
+            "- Faits de l'article source (et de <victor_story> si présent) : seules sources autorisées\n"
             "</preserve>\n\n"
             "<modify>\n"
-            "- Phrasé pour matcher la voix orale courte de Victor\n"
-            "- Casser les phrases trop longues en 2 phrases courtes\n"
-            '- Remplacer le formel par l\'oral ("il faut" → "tu dois", etc.)\n'
+            "- Phrasé pour matcher la voix directe et sobre de Victor (vouvoiement)\n"
+            "- Casser les phrases trop longues en 2 phrases courtes, ou en fragments\n"
+            '  staccato ("Pas de cahier des charges. Pas de liste.")\n'
+            '- Remplacer le formel par le direct ("il est nécessaire de" → "prévoyez", "vous devez")\n'
             "- Appliquer les règles de syntaxe FR native (<french_syntax_rules>)\n"
             "</modify>\n\n"
             "<forbidden>\n"
@@ -255,11 +385,11 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
             "<rewrite_examples>\n"
             "<example>\n"
             '  before: "Il est nécessaire d\'évaluer méticuleusement les risques avant le déploiement."\n'
-            '  after: "Évalue les risques avant de déployer. C\'est pas négociable."\n'
+            '  after: "Évaluez les risques avant de déployer. Non négociable."\n'
             "</example>\n"
             "<example>\n"
             '  before: "Les organisations doivent prendre en considération la conformité RGPD."\n'
-            '  after: "La conformité RGPD, tu la gères en amont. Pas après."\n'
+            '  after: "La conformité RGPD se gère en amont. Pas après."\n'
             "</example>\n"
             "</rewrite_examples>\n\n"
             "<outline_to_rewrite>\n" + outline_str + "\n</outline_to_rewrite>"
@@ -270,16 +400,15 @@ def agent4_victors_pen(article_ctx: str, slides_outline: list[dict]) -> list[dic
     return out["slides"]
 
 
-def _detect_violations(slides: list[dict]) -> list[str]:
+def _detect_violations(text: str) -> list[str]:
     """Détection par string matching exact sur ANTI_AI_PATTERNS (rapide)."""
-    text = " ".join(s["main"] + " " + s.get("sub", "") for s in slides)
     return [p for p in ANTI_AI_PATTERNS if p in text]
 
 
-def _detect_semantic_violations(slides: list[dict]) -> list[str]:
-    """Détection sémantique des clichés IA via Haiku — capture les variants non couverts
-    par le string matching (ex : 'dans un monde en pleine transformation')."""
-    text = "\n".join(f"S{i + 1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides))
+def _detect_semantic_violations(text: str) -> list[str]:
+    """Détection sémantique des clichés IA + fautes de voix via Haiku — capture les
+    variants non couverts par le string matching (ex : 'dans un monde en pleine
+    transformation') et le tutoiement du lecteur (la voix du compte vouvoie)."""
     out = call_tool(
         model=HAIKU_MODEL,
         system=[
@@ -291,14 +420,17 @@ def _detect_semantic_violations(slides: list[dict]) -> list[str]:
                     "superlatifs sans preuve ('incroyable', 'majeur'), révolutions annoncées, "
                     "formules creuses ('dans un monde en constante/pleine évolution/transformation'), "
                     "phrases d'experts pompiers sans ancrage factuel. "
-                    "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits."
+                    "Tu signales AUSSI toute phrase qui TUTOIE le lecteur ('tu', 'ton', 'ta', 'tes' "
+                    "adressés au lecteur) : la voix de ce compte vouvoie, le tutoiement est une faute. "
+                    "IMPORTANT : ne signale PAS les affirmations business directes ancrées sur des faits, "
+                    "ni le mot 'ton' employé comme nom commun ('le ton du message')."
                 ),
                 "cache_control": {"type": "ephemeral"},
             }
         ],
         user_text=(
-            "<slides>\n" + text + "\n</slides>\n\n"
-            "<task>Si aucun cliché IA : clean=true, violations=[]. "
+            "<texte>\n" + text + "\n</texte>\n\n"
+            "<task>Si aucun cliché IA ni tutoiement : clean=true, violations=[]. "
             "Sinon : clean=false, liste chaque phrase suspecte verbatim (max 6).</task>"
         ),
         tool=VIOLATIONS_TOOL,
@@ -309,6 +441,13 @@ def _detect_semantic_violations(slides: list[dict]) -> list[str]:
     return out.get("violations", [])
 
 
+def _find_all_violations(text: str) -> list[str]:
+    """Passe 1 string matching exact, passe 2 sémantique Haiku. Dédupliqué, ordre préservé."""
+    exact = _detect_violations(text)
+    semantic = _detect_semantic_violations(text) if not exact else []
+    return list(dict.fromkeys(exact + semantic))
+
+
 def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
     """Retry-with-feedback (CCA-F D4 §4) :
     - Passe 1 : string matching exact (ANTI_AI_PATTERNS)
@@ -316,19 +455,13 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
     Re-prompt avec violations explicites si l'une ou l'autre détecte quelque chose."""
     current = slides
     for attempt in range(MAX_DETECTOR_RETRIES + 1):
-        exact = _detect_violations(current)
-        semantic = _detect_semantic_violations(current) if not exact else []
-        violations = list(dict.fromkeys(exact + semantic))  # dédupliqué, ordre préservé
+        violations = _find_all_violations(_slides_text(current))
         if not violations:
             return current
         if attempt == MAX_DETECTOR_RETRIES:
             print(f"[agent5] giving up after {attempt} retries, residual: {violations}", file=sys.stderr)
             return current
         violations_str = ", ".join(f"'{v}'" for v in violations)
-        outline_str = "\n".join(
-            f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
-            for i, s in enumerate(current)
-        )
         out = call_tool(
             model=SONNET_MODEL,
             system=_system_with_learnings(),
@@ -336,7 +469,7 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
                 "Le draft ci-dessous contient encore des patterns interdits.\n"
                 f"PATTERNS DÉTECTÉS À ÉLIMINER : {violations_str}\n\n"
                 "Réécris en supprimant CES patterns spécifiques. Garde structure et sens.\n\n"
-                "Draft actuel :\n" + outline_str
+                "Draft actuel :\n" + _outline_str(current)
             ),
             tool=SLIDES_TOOL,
             max_tokens=TOKEN_BUDGETS["rewrite"],
@@ -345,60 +478,93 @@ def agent5_anti_ai_detector(slides: list[dict]) -> list[dict]:
     return current
 
 
-def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
-    """Cross-check faits/chiffres des slides vs article source (Haiku).
-    Détecte les affirmations inventées ou extrapolées non présentes dans l'article.
-    Si violations trouvées : Sonnet réécrit les slides fautives (1 tentative)."""
-    slides_text = "\n".join(f"S{i + 1}: {s['main']} {s.get('sub', '')}" for i, s in enumerate(slides))
+def agent5_anti_ai_detector_text(body: str) -> str:
+    """Même boucle retry-with-feedback que agent5, sur le corps d'un post text-only."""
+    current = body
+    for attempt in range(MAX_DETECTOR_RETRIES + 1):
+        violations = _find_all_violations(current)
+        if not violations:
+            return current
+        if attempt == MAX_DETECTOR_RETRIES:
+            print(
+                f"[agent5-text] giving up after {attempt} retries, residual: {violations}",
+                file=sys.stderr,
+            )
+            return current
+        violations_str = ", ".join(f"'{v}'" for v in violations)
+        out = call_tool(
+            model=SONNET_MODEL,
+            system=_system_with_learnings(),
+            user_text=(
+                "Le corps de post ci-dessous contient encore des patterns interdits.\n"
+                f"PATTERNS DÉTECTÉS À ÉLIMINER : {violations_str}\n\n"
+                "Réécris en supprimant CES patterns spécifiques. Garde le sens, la longueur "
+                "(700-1200 chars) et les sauts de ligne.\n\n"
+                "Corps actuel :\n" + current
+            ),
+            tool=TEXT_BODY_TOOL,
+            max_tokens=TOKEN_BUDGETS["pen"],
+        )
+        current = out["body"]
+    return current
+
+
+_FACTCHECK_SYSTEM = [
+    {
+        "type": "text",
+        "text": (
+            "Tu vérifies la cohérence factuelle entre des sources fournies et un contenu LinkedIn. "
+            "Ton rôle : détecter les chiffres, affirmations ou faits dans le contenu "
+            "qui ne peuvent PAS être tracés aux sources (article, et bloc <victor_story> "
+            "éventuel — les faits d'une <victor_story> sont des sources valides). "
+            "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
+            "seuls les faits inventés sont des violations."
+        ),
+        "cache_control": {"type": "ephemeral"},
+    }
+]
+
+
+def _factual_violations(article_ctx: str, content_text: str) -> list[str]:
     out = call_tool(
         model=HAIKU_MODEL,
-        system=[
-            {
-                "type": "text",
-                "text": (
-                    "Tu vérifies la cohérence factuelle entre un article source et des slides LinkedIn. "
-                    "Ton rôle : détecter les chiffres, affirmations ou faits dans les slides "
-                    "qui ne peuvent PAS être tracés à l'article. "
-                    "NE PAS signaler les interprétations ou angles éditoriaux légitimes — "
-                    "seuls les faits inventés sont des violations."
-                ),
-                "cache_control": {"type": "ephemeral"},
-            }
-        ],
+        system=_FACTCHECK_SYSTEM,
         user_text=(
             f"{article_ctx}\n\n"
-            "<slides_to_verify>\n" + slides_text + "\n</slides_to_verify>\n\n"
-            "<task>Compare chaque fait/chiffre des slides à l'article. "
-            "Si tout est sourcé dans l'article : clean=true, violations=[]. "
+            "<contenu_a_verifier>\n" + content_text + "\n</contenu_a_verifier>\n\n"
+            "<task>Compare chaque fait/chiffre du contenu aux sources. "
+            "Si tout est sourcé : clean=true, violations=[]. "
             "Sinon : clean=false, liste chaque claim non sourcé (verbatim, max 5).</task>"
         ),
         tool=FACTUAL_CHECK_TOOL,
         max_tokens=400,
     )
+    if out.get("clean", True):
+        return []
+    return out.get("violations", [])
 
-    if out.get("clean", True) or not out.get("violations"):
+
+def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
+    """Cross-check faits/chiffres des slides vs sources (Haiku).
+    Si violations trouvées : Sonnet réécrit les slides fautives (1 tentative)."""
+    violations = _factual_violations(article_ctx, _slides_text(slides))
+    if not violations:
         return slides
-
-    violations = out["violations"]
     print(f"[agent5b] factual violations detected: {violations}", file=sys.stderr)
 
-    outline_str = "\n".join(
-        f"Slide {i + 1} — main: {s['main']}" + (f" | sub: {s.get('sub', '')}" if s.get("sub") else "")
-        for i, s in enumerate(slides)
-    )
     violations_str = " | ".join(violations)
     fixed = call_tool(
         model=SONNET_MODEL,
         system=_system_with_learnings(),
         user_text=(
             f"{article_ctx}\n\n"
-            "Les slides ci-dessous contiennent des affirmations NON présentes dans l'article source.\n"
+            "Les slides ci-dessous contiennent des affirmations NON présentes dans les sources.\n"
             f"VIOLATIONS : {violations_str}\n\n"
             "Réécris en remplaçant chaque violation par :\n"
-            "- soit le fait réel présent dans l'article,\n"
+            "- soit le fait réel présent dans les sources,\n"
             "- soit une reformulation en question ouverte si le fait est incertain.\n"
             "Garde la structure, l'angle et le hook intacts.\n\n"
-            "Slides à corriger :\n" + outline_str
+            "Slides à corriger :\n" + _outline_str(slides)
         ),
         tool=SLIDES_TOOL,
         max_tokens=TOKEN_BUDGETS["rewrite"],
@@ -406,9 +572,77 @@ def agent5b_factual_check(article_ctx: str, slides: list[dict]) -> list[dict]:
     return fixed["slides"]
 
 
-def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> list[dict]:
-    """Génère 3 variations de hook texte (1 par formule)."""
-    slides_summary = " | ".join(s["main"] for s in slides[:4])
+def agent5b_factual_check_text(article_ctx: str, body: str) -> str:
+    """Cross-check factuel du corps d'un post text-only (même logique que agent5b)."""
+    violations = _factual_violations(article_ctx, body)
+    if not violations:
+        return body
+    print(f"[agent5b-text] factual violations detected: {violations}", file=sys.stderr)
+
+    violations_str = " | ".join(violations)
+    fixed = call_tool(
+        model=SONNET_MODEL,
+        system=_system_with_learnings(),
+        user_text=(
+            f"{article_ctx}\n\n"
+            "Le corps de post ci-dessous contient des affirmations NON présentes dans les sources.\n"
+            f"VIOLATIONS : {violations_str}\n\n"
+            "Réécris en remplaçant chaque violation par le fait réel sourcé, ou une question "
+            "ouverte si le fait est incertain. Garde le sens, la longueur (700-1200 chars) "
+            "et les sauts de ligne.\n\n"
+            "Corps à corriger :\n" + body
+        ),
+        tool=TEXT_BODY_TOOL,
+        max_tokens=TOKEN_BUDGETS["pen"],
+    )
+    return fixed["body"]
+
+
+def agent_text_writer(article_ctx: str, angle: dict, registre: str) -> str:
+    """Rédige le corps d'un post text-only (1300-2000 chars) dans la voix de Victor.
+
+    Le hook d'ouverture (agent 6), le CTA et les hashtags sont ajoutés autour —
+    ce corps doit tenir debout juste après une accroche d'1-2 lignes.
+    """
+    out = call_tool(
+        model=SONNET_MODEL,
+        system=_system_with_learnings(),
+        user_text=(
+            f"{article_ctx}\n\n"
+            "<context>\n"
+            f"Registre éditorial : {registre}\n"
+            f"Angle retenu : {angle['angle']}\n"
+            "</context>\n\n"
+            "<task>\n"
+            "Écris le CORPS d'un post LinkedIn text-only (pas de carrousel).\n"
+            "1300-2000 caractères (sweet spot engagement 2026 : 1301-2500, AuthoredUp ;\n"
+            "sous 400 chars le reach chute). Il commencera juste APRÈS une accroche d'1-2 lignes\n"
+            "(écrite séparément) : n'écris PAS d'accroche, entre directement dans le développement.\n"
+            "</task>\n\n"
+            "<structure>\n"
+            "- Paragraphes de 1-2 phrases max, séparés par une ligne vide (style LinkedIn aéré)\n"
+            "- Alterne phrase développée et fragments staccato (la signature Victor :\n"
+            '  "Pas de cahier des charges. Pas de liste. Juste une idée et un budget.")\n'
+            "- Développe L'ANGLE, pas un résumé de l'article : fait marquant → implication\n"
+            "  concrète pour le lecteur → comment agir ou décider\n"
+            "- Termine sur une phrase qui ouvre : question au lecteur ou antithèse courte\n"
+            '  ("Un devis réaliste vaut mieux qu\'un prix rêvé."), pas une morale plate\n'
+            "- Pas de hashtags, pas de 'DM ouvert', pas d'emoji de fin (ajoutés après)\n"
+            "</structure>\n\n"
+            "<rules>\n"
+            "- Chiffres uniquement si présents dans les sources fournies. Jamais inventés.\n"
+            "- Voix de Victor (cf. <voice>) : VOUVOIEMENT, sobre, concret, syntaxe FR native.\n"
+            "- Si <victor_story> est fourni : raconte à la première personne, fidèlement.\n"
+            "</rules>"
+        ),
+        tool=TEXT_BODY_TOOL,
+        max_tokens=TOKEN_BUDGETS["text_body"],
+    )
+    return out["body"]
+
+
+def agent6_hook_generator(article_ctx: str, angle: dict, content_summary: str) -> list[dict]:
+    """Génère 3 variations de hook + body_lines (1 par formule)."""
     out = call_tool(
         model=SONNET_MODEL,
         system=_system_with_learnings(),
@@ -417,19 +651,28 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
             "<context>\n"
             f"Angle retenu : {angle['angle']}\n"
             f"Hook visuel slide 1 : {angle['hook']}\n"
-            f"Aperçu slides 1-4 : {slides_summary}\n"
+            f"Aperçu du contenu : {content_summary}\n"
             "</context>\n\n"
             "<task>\n"
-            "Écris 3 hooks pour le TEXTE du post LinkedIn (visible AVANT le 'See more').\n"
+            "Écris 3 hooks pour le TEXTE du post LinkedIn (visible AVANT le 'See more'),\n"
+            "chacun accompagné de 1-3 body_lines courtes qui le prolongent.\n"
             "Ces hooks doivent être DIFFÉRENTS du hook visuel de la slide 1 (qui est plus court).\n"
             "1 hook par formule (contrarian, data, prospect_question).\n"
             "</task>\n\n"
+            "<body_lines_rules>\n"
+            "- 1-3 lignes courtes (max 140 chars chacune) qui suivent LE hook dans le body\n"
+            "- Elles créent la tension ou posent le contexte — elles ne RÉSUMENT PAS le contenu\n"
+            "  (un lecteur qui a tout compris ne swipe pas et ne clique pas 'see more')\n"
+            "- La dernière peut teaser ce qui suit ('Le détail slide par slide 👇' ou équivalent\n"
+            "  sobre), sans formule répétée d'un post à l'autre\n"
+            "</body_lines_rules>\n\n"
             "<constraints_per_hook>\n"
             "- Longueur cible : 100-140 chars (cutoff mobile, 80%+ du trafic 2026)\n"
             "- Hard limit : 210 chars (cutoff desktop)\n"
             "- 1 à 2 phrases courtes max\n"
-            "- Tu parles au LECTEUR (tu/vous), JAMAIS 'Mardi dernier j'ai...' (anecdote fictive interdite)\n"
-            "- Ton oral, pas titre marketing\n"
+            "- Parle au LECTEUR en le VOUVOYANT (vous/votre, jamais tu/ton) — la voix réelle\n"
+            "  de Victor vouvoie. JAMAIS 'Mardi dernier j'ai...' (anecdote fictive interdite)\n"
+            "- Ton direct et sobre, pas titre marketing\n"
             "- Pas de template anglais reconnaissable type 'Here's what nobody tells you' "
             "(360Brew détecte sémantiquement les hooks copy-paste)\n"
             "- SYNTAXE FRANÇAISE NATIVE : adverbe APRÈS le verbe ('configure mal', PAS 'mal configure').\n"
@@ -439,7 +682,7 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
             '<formula name="contrarian">\n'
             "Challenge une idée reçue du marché ou contredit ce que l'article suggère.\n"
             "<good_example>\"Tout le monde court chercher 'le meilleur LLM'. Le vrai problème est ailleurs.\"</good_example>\n"
-            "<good_example>\"Un label 'leader Gartner' ne paye pas ta facture d'API. Ce qui change la donne :\"</good_example>\n"
+            "<good_example>\"Un label 'leader Gartner' ne paye pas votre facture d'API. Ce qui compte :\"</good_example>\n"
             '<bad_example>"Voici la dure réalité de l\'IA en entreprise." (cliché vide, autoritaire)</bad_example>\n'
             '<bad_example>"L\'IA va TOUT changer." (banale, pas de contrarian réel)</bad_example>\n'
             "</formula>\n\n"
@@ -447,16 +690,16 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
             "Cite UN chiffre PRÉSENT dans l'article + son implication business.\n"
             "Si l'article n'a aucun chiffre exploitable, n'utilise PAS cette formule. Mieux vaut un\n"
             "doublon contrarian que d'inventer un '73%' ou un 'McKinsey'.\n"
-            '<good_example>"Gartner classe OpenAI Leader 2026 en agents coding. Ça ne te dit rien sur ton prix final."</good_example>\n'
-            '<good_example>"30% de gain de productivité chez Virgin Atlantic avec Codex. Reproductible chez toi ?"</good_example>\n'
+            '<good_example>"Gartner classe OpenAI Leader 2026 en agents coding. Ça ne vous dit rien sur votre prix final."</good_example>\n'
+            '<good_example>"30% de gain de productivité chez Virgin Atlantic avec Codex. Reproductible chez vous ?"</good_example>\n'
             "<bad_example>\"73% des PME passent à l'IA en 2026.\" (chiffre fabriqué, source pas dans l'article)</bad_example>\n"
             "</formula>\n\n"
             '<formula name="prospect_question">\n'
             "Pose une question qui résonne avec UNE douleur précise de la cible.\n"
-            '<good_example>"Tu paies déjà ton abonnement Copilot. Tu sais ce que tu y gagnes vraiment ?"</good_example>\n'
-            '<good_example>"Tu veux brancher l\'IA dans tes process. Qui pilote ça en interne ?"</good_example>\n'
+            '<good_example>"Vous payez déjà votre abonnement Copilot. Vous savez ce que vous y gagnez vraiment ?"</good_example>\n'
+            '<good_example>"Vous voulez brancher l\'IA dans vos process. Qui pilote ça en interne ?"</good_example>\n'
             '<bad_example>"Vous voulez gagner du temps avec l\'IA ?" (question vide, banale)</bad_example>\n'
-            "<bad_example>\"L'IA pour ta PME, ça t'intéresse ?\" (yes/no fermé, aucune accroche)</bad_example>\n"
+            '<bad_example>"L\'IA pour votre PME, ça vous intéresse ?" (yes/no fermé, aucune accroche)</bad_example>\n'
             "</formula>\n\n"
             "</formulas>"
         ),
@@ -466,8 +709,14 @@ def agent6_hook_generator(article_ctx: str, angle: dict, slides: list[dict]) -> 
     return out["variants"]
 
 
-def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
-    """Sélectionne le hook winner parmi les 3 variations (Haiku).
+def agent7_hook_judge(topic: str, variants: list[dict], angle: dict, target_formula: str) -> dict:
+    """Valide la formule cible de la rotation, avec veto qualité (Haiku).
+
+    La formule cible suit une rotation least-recently-used entre posts : c'est elle qui
+    garantit que chaque formule est EXPOSÉE en réel (sinon le judge seul convergeait sur
+    prospect_question 9 fois sur 11 — aucune comparaison de perfs possible). Le judge
+    garde un droit de veto si la variante cible est invalide ou faible.
+
     Reçoit `topic` (titre + résumé court) au lieu du full article_ctx — suffisant pour juger
     des hooks déjà générés, économise ~1500 tokens Haiku par run."""
     variants_str = "\n".join(f"[{v['formula']}] ({len(v['hook'])} chars) {v['hook']}" for v in variants)
@@ -479,7 +728,11 @@ def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
             f"<post_angle>{angle['angle']}</post_angle>\n\n"
             "<variants>\n" + variants_str + "\n</variants>\n\n"
             "<task>\n"
-            "Choisis LE meilleur des 3 hooks pour la cible PME/CTO non-tech.\n"
+            f"FORMULE CIBLE de la rotation : {target_formula}.\n"
+            "Choisis la variante de la formule cible, SAUF si elle viole un critère\n"
+            "ci-dessous (chiffre fabriqué, anecdote fictive, banale au point de ne rien\n"
+            "accrocher, clickbait, calque anglais) — dans ce cas choisis la meilleure des\n"
+            "autres et explique le veto.\n"
             "Renvoie : winner_formula + 1-2 phrases de justification (max 300 chars).\n"
             "</task>\n\n"
             "<criteria ordered_by_priority>\n"
@@ -489,21 +742,22 @@ def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
             "4. TIENT SA PROMESSE : pas de clickbait — le post doit livrer ce que le hook teaste (algo 2026 pénalise)\n"
             "5. MATCH AUDIENCE NON-TECH : si jargon technique pas traduit → score plus bas\n"
             '6. SYNTAXE FR NATIVE : un calque type "mal configure", "bien utilise" → RECALE\n'
+            '7. VOUVOIEMENT : un hook qui tutoie le lecteur ("tu", "ton") → RECALE (la voix Victor vouvoie)\n'
             "</criteria>\n\n"
             "<judgement_examples>\n"
             "<example>\n"
             "  variants:\n"
             '    [contrarian] "L\'IA va TOUT changer en 2026." (banal)\n'
             '    [data] "73% des PME utilisent l\'IA." (chiffre fabriqué)\n'
-            '    [prospect_question] "Tu paies déjà ton outil IA. Tu sais combien il te coûte vraiment ?"\n'
+            '    [prospect_question] "Vous payez déjà votre outil IA. Vous savez combien il vous coûte vraiment ?"\n'
             "  winner: prospect_question\n"
             '  reason: "Seul à toucher une douleur PME précise (coût caché). Les 2 autres : 1 banal, 1 chiffre fabriqué."\n'
             "</example>\n"
             "<example>\n"
             "  variants:\n"
-            '    [contrarian] "Tu cherches le meilleur LLM. Le vrai problème est ailleurs."\n'
+            '    [contrarian] "Vous cherchez le meilleur LLM. Le vrai problème est ailleurs."\n'
             '    [data] "Anthropic vient de sortir Claude 5. 60% plus rapide selon eux."\n'
-            '    [prospect_question] "Tu hésites entre Claude et GPT ?"\n'
+            '    [prospect_question] "Vous hésitez entre Claude et GPT ?"\n'
             "  winner: contrarian\n"
             '  reason: "Contrarian le plus actionnable. Le data est anecdotique (perf, pas business). Le question est trop tech."\n'
             "</example>\n"
@@ -515,8 +769,11 @@ def agent7_hook_judge(topic: str, variants: list[dict], angle: dict) -> dict:
     return out
 
 
-def agent8_cta_comment(topic: str, angle: dict) -> str:
-    """1er commentaire = CTA direct sous le post (Haiku).
+def agent8_cta_comment(topic: str, angle: dict, mode: str = "pitch") -> str:
+    """1er commentaire sous le post (Haiku). Deux modes rotés :
+    - "pitch"  (1 post sur 3) : CTA commercial direct avec livrable nommé
+    - "valeur" (2 posts sur 3) : complément utile, zéro vente — un pitch à chaque post
+      lessivait la crédibilité (audience de pairs, ~quelques centaines d'impressions)
 
     Reçoit `topic` (titre + résumé court) au lieu du full article_ctx — l'angle capture
     déjà l'essence du sujet, économise ~1500 tokens Haiku par run.
@@ -525,6 +782,8 @@ def agent8_cta_comment(topic: str, angle: dict) -> str:
     jusqu'à -80% la visibilité des commentaires contenant un lien (Voketa Q1 2026,
     ConnectSafely 2026). Le canal d'action = "DM ouvert" uniquement.
     """
+    if mode == "valeur":
+        return _agent8_comment_valeur(topic, angle)
     out = call_tool(
         model=HAIKU_MODEL,
         system=_system_with_learnings(HAIKU_MODEL),
@@ -546,11 +805,11 @@ def agent8_cta_comment(topic: str, angle: dict) -> str:
             "Un livrable doit être NOMMÉ et CONCRET. Si tu ne peux pas le nommer, reformule le CTA.\n"
             '<good_livrable>"une feuille de route chiffrée"</good_livrable>\n'
             '<good_livrable>"une short-list de 3 cas d\'usage prioritaires"</good_livrable>\n'
-            '<good_livrable>"une grille de risques sur ta stack actuelle"</good_livrable>\n'
+            '<good_livrable>"une grille de risques sur votre stack actuelle"</good_livrable>\n'
             '<good_livrable>"un plan d\'action 30/60/90 jours"</good_livrable>\n'
             '<bad_livrable>"on discute"</bad_livrable>\n'
             '<bad_livrable>"on regarde ensemble"</bad_livrable>\n'
-            '<bad_livrable>"on échange sur ton cas"</bad_livrable>\n'
+            '<bad_livrable>"on échange sur votre cas"</bad_livrable>\n'
             "</rule>\n\n"
             '<rule name="no-link" priority="critical">\n'
             "AUCUN lien dans le commentaire. AUCUNE URL. AUCUNE mention de site web (victorlenain.fr inclus).\n"
@@ -558,16 +817,62 @@ def agent8_cta_comment(topic: str, angle: dict) -> str:
             'Seul canal autorisé : "DM ouvert".\n'
             "</rule>\n\n"
             "<bad_examples>\n"
-            '<bad>"N\'hésite pas à me contacter pour en discuter !" (vague, pas de livrable)</bad>\n'
+            '<bad>"N\'hésitez pas à me contacter pour en discuter !" (vague, pas de livrable)</bad>\n'
             '<bad>"Plus d\'infos sur victorlenain.fr 👉" (lien externe → -80% visibilité)</bad>\n'
             '<bad>"DM moi pour qu\'on en parle" (verbe vague, pas de livrable nommé)</bad>\n'
             "</bad_examples>\n\n"
             "<good_examples>\n"
-            '<good>"L\'IA pour PME ça commence par savoir quoi automatiser. Si tu veux clarifier ça pour ton entreprise : 30min en DM. Tu repars avec une short-list de 3 cas prioritaires et un coût ordre de grandeur. DM ouvert."</good>\n'
-            "<good>\"Le 'leader Gartner' ne te dit pas combien tu vas payer. Mon audit 30min gratuit te donne une grille de coût réel sur ta stack + un plan de migration sans lock-in. DM ouvert.\"</good>\n"
+            '<good>"L\'IA pour PME ça commence par savoir quoi automatiser. Si vous voulez clarifier ça pour votre entreprise : 30min en DM. Vous repartez avec une short-list de 3 cas prioritaires et un coût ordre de grandeur. DM ouvert."</good>\n'
+            "<good>\"Le 'leader Gartner' ne vous dit pas combien vous allez payer. Mon audit 30min gratuit vous donne une grille de coût réel sur votre stack + un plan de migration sans lock-in. DM ouvert.\"</good>\n"
             "</good_examples>\n\n"
             "<voice>\n"
-            'Direct, oral, voix Victor. Pas vendeur agressif. Pas de "Hello !". Pas de 🚀.\n'
+            'Direct, sobre, voix Victor (VOUVOIEMENT). Pas vendeur agressif. Pas de "Hello !". Pas de 🚀.\n'
+            "Relis pour les accords de genre (UN audit, UNE grille, UN plan d'action).\n"
+            "</voice>"
+        ),
+        tool=CTA_COMMENT_TOOL,
+        max_tokens=TOKEN_BUDGETS["comment_writer"],
+    )
+    return out["comment"]
+
+
+def _agent8_comment_valeur(topic: str, angle: dict) -> str:
+    """Mode "valeur" du 1er commentaire : un complément utile, zéro vente."""
+    out = call_tool(
+        model=HAIKU_MODEL,
+        system=_system_with_learnings(HAIKU_MODEL),
+        user_text=(
+            f"<topic>{topic}</topic>\n\n"
+            f"<post_angle>{angle['angle']}</post_angle>\n\n"
+            "<task>\n"
+            "Écris le 1er commentaire que Victor poste sous son propre post.\n"
+            "Mode COMPLÉMENT DE VALEUR : tu apportes UN élément utile en plus du post —\n"
+            "pas de pitch, pas d'offre, pas de 'audit gratuit'.\n"
+            "</task>\n\n"
+            '<format length="150-350 chars">\n'
+            "UN seul des formats suivants, au choix selon la matière :\n"
+            "- La nuance que le post n'avait pas la place de développer\n"
+            "- Le premier pas concret si on veut creuser le sujet soi-même\n"
+            "- La question que Victor se poserait à la place du lecteur\n"
+            "- Le contre-cas : quand le conseil du post ne s'applique PAS\n"
+            "</format>\n\n"
+            '<rule name="no-link" priority="critical">\n'
+            "AUCUN lien, AUCUNE URL, AUCUNE mention de site web.\n"
+            "</rule>\n\n"
+            '<rule name="no-pitch">\n'
+            "Pas de CTA commercial, pas de livrable, pas de 'DM ouvert' obligatoire.\n"
+            "Si une invitation à échanger émerge naturellement, une demi-phrase sobre suffit.\n"
+            "</rule>\n\n"
+            "<bad_examples>\n"
+            '<bad>"Si vous voulez un audit gratuit, DM ouvert !" (pitch — pas en mode valeur)</bad>\n'
+            '<bad>"Merci d\'avoir lu ! 🙏" (vide)</bad>\n'
+            "</bad_examples>\n\n"
+            "<good_examples>\n"
+            "<good>\"Le point que je n'ai pas développé : la moitié du coût d'un agent vocal, c'est l'intégration à votre agenda et votre CRM. L'abonnement, lui, est public. Demandez toujours le devis TOUT compris.\"</good>\n"
+            '<good>"Par où commencer si vous voulez vérifier ça chez vous : exportez 20 tickets support de la semaine dernière et regardez combien suivent le même schéma. C\'est ce volume répétitif qui dit si un agent vaut le coup."</good>\n'
+            "</good_examples>\n\n"
+            "<voice>\n"
+            "Direct, sobre, voix Victor (VOUVOIEMENT). Relis pour les accords de genre (UN audit, UNE grille).\n"
             "</voice>"
         ),
         tool=CTA_COMMENT_TOOL,
@@ -660,22 +965,31 @@ def slugify(text: str) -> str:
 
 
 def flatten_slides_to_strings(slides: list[dict]) -> list[str]:
-    """Pour le PDF generator (qui parse 'main\\nsub')."""
-    return [s["main"] + ("\n" + s["sub"] if s.get("sub") else "") for s in slides]
+    """Version texte lisible des slides (carousel.md, dashboard). Le PDF generator
+    consomme désormais slides_structured (slides.json), pas ces strings."""
+    out = []
+    for s in slides:
+        txt = s["main"]
+        if s.get("sub"):
+            txt += "\n" + s["sub"]
+        for item in s.get("items", []):
+            txt += "\n- " + item
+        out.append(txt)
+    return out
 
 
 CTA_MARKER = "dm"
 
 
-def ensure_cta(slides: list[dict]) -> list[dict]:
-    """Garantit que la dernière slide contient le CTA."""
+def ensure_cta(slides: list[dict], cta_text: str) -> list[dict]:
+    """Garantit que la dernière slide contient le CTA (variante rotée du run)."""
     if not slides:
         return slides
     last = slides[-1]
     combined = (last.get("main", "") + " " + last.get("sub", "")).lower()
     if CTA_MARKER not in combined and "discuter" not in combined:
         existing_sub = last.get("sub", "").strip()
-        last["sub"] = (existing_sub + " " + CTA_SLIDE_TEXT).strip() if existing_sub else CTA_SLIDE_TEXT
+        last["sub"] = (existing_sub + " " + cta_text).strip() if existing_sub else cta_text
     return slides
 
 
@@ -810,25 +1124,45 @@ def _build_grounding_context(news: dict, clean_text: str) -> str:
     return _article_context(grounding_news)
 
 
-def _run_once(
-    grounding_ctx: str, factcheck_ctx: str, recent_hooks: list[str] | None = None
-) -> tuple[list[dict], dict]:
-    print("[agent1] Pain excavator…", file=sys.stderr)
-    pains = agent1_pain_excavator(grounding_ctx)
-    print("[agent2] Angle scout…", file=sys.stderr)
-    angle = agent2_angle_scout(grounding_ctx, pains, recent_hooks)
-    print("[agent3] Slide architect…", file=sys.stderr)
-    outline = agent3_slide_architect(grounding_ctx, angle)
-    print("[agent4] Victor's pen…", file=sys.stderr)
-    draft = agent4_victors_pen(grounding_ctx, outline)
-    print("[agent5] Anti-AI detector (string + semantic)…", file=sys.stderr)
-    cleaned = agent5_anti_ai_detector(draft)
-    print("[agent5b] Factual check (slides vs article complet)…", file=sys.stderr)
-    final = agent5b_factual_check(factcheck_ctx, cleaned)
-    return final, angle
+def _select_target_formula() -> str:
+    """Formule de hook cible : least-recently-used parmi HOOK_FORMULAS (rotation honnête)."""
+    recent = recent_winner_formulas(limit=6)
+
+    def last_use(formula: str) -> int:
+        try:
+            return recent.index(formula)
+        except ValueError:
+            return len(recent) + 1
+
+    return max(HOOK_FORMULAS, key=last_use)
 
 
-def generate(topic_input=None) -> dict:
+def _strip_markdown(text: str) -> str:
+    """Retire le markdown que LinkedIn ne rend pas (`**gras**` apparaît littéralement).
+    Le marquage **mot** est réservé aux SLIDES (consommé par html_to_pdf.js) — tout
+    texte publié tel quel (body, hooks, commentaire) doit en être purgé."""
+    return re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+
+
+def _normalize_punctuation(text: str) -> str:
+    """Remplace l'em-dash par deux-points : la règle <voice> l'interdit dans le texte
+    visible, mais le bloc hook+body_lines (agents 6/7) ne repasse pas par le détecteur
+    agent 5 — normalisation déterministe à l'assemblage, zéro token."""
+    return re.sub(r"\s*—\s*", " : ", text)
+
+
+def _assemble_post_text(hook: str, body_parts: list[str], rotation_index: int) -> str:
+    """Body du post : hook + lignes de contexte + CTA roté + hashtags rotés."""
+    parts = [_normalize_punctuation(_strip_markdown(hook.strip()))]
+    parts.extend(_normalize_punctuation(_strip_markdown(p.strip())) for p in body_parts if p and p.strip())
+    suffix = cta_post_suffix_for(rotation_index)
+    if suffix:
+        parts.append(suffix)
+    parts.append(hashtags_for(rotation_index))
+    return "\n\n".join(parts)
+
+
+def generate(topic_input=None) -> dict:  # noqa: PLR0915
     """Génère un post à partir de l'article retenu par le scorer (le 1er de l'entrée).
 
     Pas de fallback : pertinence ET diversité (pas de doublon de sujet/angle) sont garanties
@@ -848,34 +1182,88 @@ def generate(topic_input=None) -> dict:
     topic = _news_to_topic(winner_news)
     recent_hooks = recent_winning_hooks()
 
+    # ── Décisions éditoriales AVANT génération (déterministes, loggées) ──
+    format_choice, format_reason = select_format()
+    print(f"[format] {format_choice} — {format_reason}", file=sys.stderr)
+
+    stories = load_stories()
+    registre, registre_reason = select_registre(bool(stories))
+    print(f"[registre] {registre} — {registre_reason}", file=sys.stderr)
+
+    # Index de rotation déterministe (CTA, hashtags, mode commentaire) : avance à chaque
+    # publication réelle, stable entre dry-runs.
+    rotation_index = published_count()
+
     print(f"[generate] article retenu : {topic[:80]}", file=sys.stderr)
     clean_text = fetch_article_text(winner_news.get("url", ""))
     if clean_text:
         print(f"[generate] article body extracted ({len(clean_text)} chars)", file=sys.stderr)
-    grounding_ctx_winner = _build_grounding_context(winner_news, clean_text)
+    grounding_ctx = _build_grounding_context(winner_news, clean_text)
     factcheck_ctx = _article_context({**winner_news, "content": clean_text})
-    slides, angle = _run_once(grounding_ctx_winner, factcheck_ctx, recent_hooks)
 
-    keywords = extract_keywords(topic, slides)
-    slides = ensure_cta(slides)
+    # ── Agents 1-2 : douleurs + angle (communs aux deux formats) ──
+    print("[agent1] Pain excavator…", file=sys.stderr)
+    pains = agent1_pain_excavator(grounding_ctx)
+    print(f"[agent2] Angle scout (registre={registre})…", file=sys.stderr)
+    angle = agent2_angle_scout(grounding_ctx, pains, recent_hooks, registre, stories)
 
-    print("[agent6] Hook generator (3 variants)…", file=sys.stderr)
-    variants = agent6_hook_generator(grounding_ctx_winner, angle, slides)
+    # Registre preuve : injecte la story choisie dans le grounding créatif ET le factcheck
+    # (ses faits deviennent du matériau autorisé). Si aucune story ne colle → pedagogie.
+    story_id = (angle.get("story_id") or "").strip()
+    if registre == REGISTRE_PREUVE:
+        story = get_story(stories, story_id) if story_id else None
+        if story is None:
+            print(
+                "[registre] aucune story pertinente pour cet article → bascule en pedagogie",
+                file=sys.stderr,
+            )
+            registre = REGISTRE_PEDAGOGIE
+            story_id = ""
+        else:
+            blk = story_block(story)
+            grounding_ctx = grounding_ctx + "\n\n" + blk
+            factcheck_ctx = factcheck_ctx + "\n\n" + blk
 
-    print("[agent7] Hook judge…", file=sys.stderr)
-    judge = agent7_hook_judge(topic, variants, angle)
+    # ── Branche par format ──
+    if format_choice == FORMAT_CAROUSEL:
+        print("[agent3] Slide architect…", file=sys.stderr)
+        outline = agent3_slide_architect(grounding_ctx, angle, registre, cta_slide_for(rotation_index))
+        print("[agent4] Victor's pen…", file=sys.stderr)
+        draft = agent4_victors_pen(grounding_ctx, outline)
+        print("[agent5] Anti-AI detector (string + semantic)…", file=sys.stderr)
+        cleaned = agent5_anti_ai_detector(draft)
+        print("[agent5b] Factual check (slides vs sources)…", file=sys.stderr)
+        slides = agent5b_factual_check(factcheck_ctx, cleaned)
+        slides = ensure_cta(slides, cta_slide_for(rotation_index))
+        text_body = ""
+        content_summary = " | ".join(s["main"] for s in slides[:4])
+    else:
+        print(f"[agent-T] Text writer (registre={registre})…", file=sys.stderr)
+        text_body = agent_text_writer(grounding_ctx, angle, registre)
+        print("[agent5-text] Anti-AI detector…", file=sys.stderr)
+        text_body = agent5_anti_ai_detector_text(text_body)
+        print("[agent5b-text] Factual check…", file=sys.stderr)
+        text_body = agent5b_factual_check_text(factcheck_ctx, text_body)
+        slides = []
+        content_summary = text_body[:300]
+
+    keywords = extract_keywords(topic, slides) if slides else extract_keywords(topic, [])
+
+    print("[agent6] Hook generator (3 variants + body lines)…", file=sys.stderr)
+    variants = agent6_hook_generator(grounding_ctx, angle, content_summary)
+
+    target_formula = _select_target_formula()
+    print(f"[agent7] Hook judge (formule cible : {target_formula})…", file=sys.stderr)
+    judge = agent7_hook_judge(topic, variants, angle, target_formula)
     winner_formula = judge["winner_formula"]
     winner_variant = next((v for v in variants if v["formula"] == winner_formula), variants[0])
 
-    print("[agent8] CTA comment writer…", file=sys.stderr)
-    first_comment = agent8_cta_comment(topic, angle)
+    comment_mode = "pitch" if rotation_index % 3 == 0 else "valeur"
+    print(f"[agent8] First comment (mode={comment_mode})…", file=sys.stderr)
+    first_comment = _normalize_punctuation(_strip_markdown(agent8_cta_comment(topic, angle, comment_mode)))
 
     usage = get_run_usage_totals()
     print(f"[cost] {get_run_usage_summary()}", file=sys.stderr)
-
-    # Décide du format pour cette publication (carousel / text / poll)
-    format_choice, format_reason = select_format()
-    print(f"[format] {format_choice} — {format_reason}", file=sys.stderr)
 
     slug = (
         slugify(topic[:40])
@@ -883,21 +1271,28 @@ def generate(topic_input=None) -> dict:
         or f"post-{int(time.time())}"
     )
     slides_str = flatten_slides_to_strings(slides)
-    post_text = f"{winner_variant['hook'].strip()}\n\n{CTA_POST_SUFFIX}\n\n{HASHTAGS}"
+    body_parts = winner_variant.get("body_lines", []) if format_choice == FORMAT_CAROUSEL else [text_body]
+    post_text = _assemble_post_text(winner_variant["hook"], body_parts, rotation_index)
 
     return {
         "format": format_choice,
         "format_reason": format_reason,
+        "registre": registre,
+        "registre_reason": registre_reason,
+        "story_id": story_id,
+        "comment_mode": comment_mode,
         "topic": topic[:120],
         "slug": slug,
         "angle": angle.get("angle", ""),
         "visual_hook": angle.get("hook", ""),
         "hook_variants": variants,
+        "hook_target_formula": target_formula,
         "hook_winner_formula": winner_formula,
         "hook_winner_reason": judge["reason"],
         "feed_hook": winner_variant["hook"],
         "slides": slides_str,
         "slides_structured": slides,
+        "text_body": text_body,
         "post_text": post_text,
         "first_comment": first_comment,
         "keywords": keywords,

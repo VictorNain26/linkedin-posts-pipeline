@@ -98,6 +98,7 @@ from dashboard_queries import (  # noqa: E402
     load_latest_analytics,
     load_post_metrics_summary,
     load_posts,
+    load_registre_stats,
     post_dir_for,
     read_text_file,
     render_pdf_pages,
@@ -142,7 +143,7 @@ def _dialog_reject() -> None:
 # ──────────────────────────────────────────────────────────────
 # Rendu d'un post (Historique + Tests)
 # ──────────────────────────────────────────────────────────────
-def render_post(row: pd.Series) -> None:  # noqa: PLR0912
+def render_post(row: pd.Series) -> None:  # noqa: PLR0912, PLR0915
     post_id = int(row["id"])
     pdir = post_dir_for(row["published_at"], row["slug"])
 
@@ -151,8 +152,12 @@ def render_post(row: pd.Series) -> None:  # noqa: PLR0912
         st.markdown(f"**Topic** : {row['topic']}")
         cost_val = row.get("cost_usd")
         cost_str = f"  ·  **Coût** : `${cost_val:.4f}`" if pd.notna(cost_val) and cost_val else ""
+        registre_val = row.get("registre")
+        registre_str = (
+            f"  ·  **Registre** : `{registre_val}`" if pd.notna(registre_val) and registre_val else ""
+        )
         st.markdown(
-            f"**Date** : {row['published_at']}  ·  **Format** : `{row['format']}`  ·  "
+            f"**Date** : {row['published_at']}  ·  **Format** : `{row['format']}`{registre_str}  ·  "
             f"**LinkedIn URN** : `{row['linkedin_post_id'] or '—'}`{cost_str}"
         )
 
@@ -322,7 +327,7 @@ def _render_cost_section() -> None:
         c2.metric("Coût moyen / post", f"${cost['avg_usd']:.4f}")
         c3.metric("Posts trackés", cost["n_tracked"])
         st.caption(
-            "Coût = appels Anthropic pour les 8 agents de génération uniquement "
+            "Coût = appels Anthropic des agents de génération uniquement "
             "(hors scoring RSS). Prix mai 2026 : Sonnet $3/$15/MTok, Haiku $0.80/$4/MTok."
         )
         st.markdown("---")
@@ -342,10 +347,17 @@ def _render_kpis_section(days: int) -> None:
         return
 
     if not posts_metrics.empty:
-        kpi_cols = st.columns(3)
+        total_impr = int(posts_metrics["impressions"].fillna(0).sum())
+        total_inter = int(posts_metrics["interactions"].fillna(0).sum())
+        kpi_cols = st.columns(4)
         kpi_cols[0].metric("Posts", len(posts_metrics))
-        kpi_cols[1].metric("Impressions", int(posts_metrics["impressions"].fillna(0).sum()))
-        kpi_cols[2].metric("Interactions", int(posts_metrics["interactions"].fillna(0).sum()))
+        kpi_cols[1].metric("Impressions", total_impr)
+        kpi_cols[2].metric("Interactions", total_inter)
+        kpi_cols[3].metric(
+            "Taux d'engagement",
+            f"{total_inter / total_impr * 100:.1f}%" if total_impr else "—",
+            help="Interactions / impressions. Référence LinkedIn 2026 : ~2% bon, 5%+ excellent.",
+        )
 
     if not growth.empty:
         growth["date"] = pd.to_datetime(growth["date"])
@@ -365,13 +377,14 @@ def _render_kpis_section(days: int) -> None:
             "Métriques séparées via API scope `r_member_postAnalytics` uniquement."
         )
         st.dataframe(
-            posts_metrics[["published_at", "topic", "format", "impressions", "interactions"]],
+            posts_metrics[["published_at", "topic", "format", "registre", "impressions", "interactions"]],
             use_container_width=True,
             hide_index=True,
             column_config={
                 "published_at": st.column_config.DatetimeColumn("Date", format="YYYY-MM-DD HH:mm"),
                 "topic": st.column_config.TextColumn("Topic", width="large"),
                 "format": "Format",
+                "registre": "Registre",
                 "impressions": st.column_config.NumberColumn("Impressions", format="%d"),
                 "interactions": st.column_config.NumberColumn("Interactions", format="%d"),
             },
@@ -424,6 +437,26 @@ def _render_patterns_section(days: int) -> None:
         else:
             st.bar_chart(fmt.set_index("format")["n"])
 
+    st.subheader("Registre éditorial")
+    registre_stats = load_registre_stats(days=days)
+    if registre_stats.empty:
+        st.caption(
+            "Pas encore de data — le registre est enregistré depuis 2026-06. "
+            "La rotation pain/pédagogie/preuve devient comparable après quelques posts publiés."
+        )
+    else:
+        st.dataframe(
+            registre_stats,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "registre": "Registre",
+                "n": st.column_config.NumberColumn("Posts", format="%d"),
+                "avg_impressions": st.column_config.NumberColumn("Impressions moy.", format="%.0f"),
+                "avg_interactions": st.column_config.NumberColumn("Interactions moy.", format="%.1f"),
+            },
+        )
+
 
 @st.fragment
 def _render_import_section() -> None:
@@ -449,6 +482,16 @@ def _render_import_section() -> None:
             except ValueError as e:
                 st.error(f"❌ Nom de fichier rejeté : {e}")
                 return
+
+            # Garde anti re-import : file_uploader garde le fichier en session, et chaque
+            # interaction rerun le fragment → sans ce hash, le même XLSX était ré-importé
+            # à chaque clic (lignes analytics dupliquées toutes les ~5s en DB).
+            import hashlib  # noqa: PLC0415
+
+            file_hash = hashlib.sha256(uploaded.getbuffer()).hexdigest()
+            if st.session_state.get("last_import_hash") == file_hash:
+                st.success("✅ Fichier déjà importé dans cette session.")
+                return
             saved_path.write_bytes(uploaded.getbuffer())
 
             try:
@@ -456,11 +499,18 @@ def _render_import_section() -> None:
 
                 with st.spinner("Import en cours..."):
                     summary = run_import(saved_path)
-                cols = st.columns(4)
+                st.session_state["last_import_hash"] = file_hash
+                cols = st.columns(5)
                 cols[0].metric("Posts matchés", summary.get("posts_matched", 0))
                 cols[1].metric("Posts externes créés", summary.get("posts_external_created", 0))
                 cols[2].metric("Métriques inscrites", summary.get("metrics_written", 0))
-                cols[3].metric("Jours followers", summary.get("follower_days_imported", 0))
+                cols[3].metric(
+                    "Rejets fenêtrés",
+                    summary.get("metrics_skipped_windowed", 0),
+                    help="Valeurs inférieures au cumul connu (export sur fenêtre courte) — "
+                    "ignorées pour ne pas écraser les cumuls.",
+                )
+                cols[4].metric("Jours followers", summary.get("follower_days_imported", 0))
                 if summary.get("warnings"):
                     for w in summary["warnings"]:
                         st.warning(w)
@@ -620,7 +670,11 @@ def page_approbation() -> None:  # noqa: PLR0912, PLR0915
     st.markdown(f"**Article source :** {draft.get('article_title', '?')}")
     if draft.get("article_url"):
         st.markdown(f"[Lire l'article source]({draft['article_url']})")
-    st.caption(f"Généré le {draft.get('generated_at', '?')[:16]} · Format : `{draft.get('format', '?')}`")
+    _reg = draft.get("registre", "")
+    _reg_str = f" · Registre : `{_reg}`" if _reg else ""
+    st.caption(
+        f"Généré le {draft.get('generated_at', '?')[:16]} · Format : `{draft.get('format', '?')}`{_reg_str}"
+    )
 
     st.markdown("---")
 
@@ -706,26 +760,36 @@ def page_approbation() -> None:  # noqa: PLR0912, PLR0915
 
     st.markdown("---")
 
-    with st.expander("📝 Texte du post (hook + hashtags)", expanded=True):
+    with st.expander("📝 Texte du post", expanded=True):
         st.text(draft.get("post_text", ""))
 
     slides = draft.get("slides_structured", [])
     if slides:
         with st.expander(f"🎞️ Slides ({len(slides)})", expanded=True):
             for i, slide in enumerate(slides):
-                st.markdown(f"**Slide {i + 1}** — {slide.get('main', '')}")
+                kind = slide.get("kind", "standard")
+                kind_badge = {"list": " `liste`", "number": " `chiffre`"}.get(kind, "")
+                st.markdown(f"**Slide {i + 1}**{kind_badge} — {slide.get('main', '')}")
                 if slide.get("sub"):
                     st.caption(slide["sub"])
+                for n, item in enumerate(slide.get("items", []), start=1):
+                    st.caption(f"  {n}. {item}")
 
     if post_dir is not None:
         pdf_path = post_dir / "carousel.pdf"
         if pdf_path.exists():
-            with st.expander("📄 Aperçu PDF carousel"):
-                pages = render_pdf_pages(str(pdf_path), scale=1.2)
-                for img in pages[:3]:
-                    st.image(img, use_container_width=True)
+            # Aperçu COMPLET : approuver un carrousel dont on n'a vu que 3 slides sur 7,
+            # c'est publier des slides non relues.
+            with st.expander("📄 Aperçu PDF carousel (toutes les slides)", expanded=True):
+                pages = render_pdf_pages(str(pdf_path), scale=0.8)
+                cols = st.columns(min(len(pages), 3))
+                for i, img in enumerate(pages):
+                    with cols[i % len(cols)]:
+                        st.image(img, caption=f"Slide {i + 1}", use_container_width=True)
 
-    with st.expander("💬 Premier commentaire (CTA)"):
+    _mode = draft.get("comment_mode", "")
+    _mode_str = f" — mode `{_mode}`" if _mode else ""
+    with st.expander(f"💬 Premier commentaire{_mode_str}"):
         st.text(draft.get("first_comment", ""))
 
     variants = draft.get("hook_variants", [])
@@ -751,7 +815,9 @@ st.set_page_config(
 # st.navigation doit être appelé juste après set_page_config, avant tout autre st.*
 _nav = st.navigation(
     [
-        st.Page(page_approbation, title="Approbation", icon="✅", url_path="approbation"),
+        # Page par défaut : Streamlit la sert à la racine, un url_path custom n'est
+        # pas routable dessus (visite directe → modal "Page not found").
+        st.Page(page_approbation, title="Approbation", icon="✅"),
         st.Page(page_analytics, title="Analytics + IA", icon="📊", url_path="analytics"),
         st.Page(page_learnings, title="Learnings", icon="🧠", url_path="learnings"),
         st.Page(page_historique, title="Historique", icon="📜", url_path="historique"),

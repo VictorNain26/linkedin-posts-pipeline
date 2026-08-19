@@ -36,8 +36,13 @@ from pathlib import Path
 
 from history import (
     _conn,
+    find_post_by_activity_id,
+    find_published_post_by_date,
     init_db,
     insert_audience_snapshot,
+    merge_post_into,
+    purge_non_monotonic_analytics,
+    set_activity_id,
     upsert_analytics,
     upsert_follower_growth,
 )
@@ -221,17 +226,41 @@ def _parse_demographics_sheet(xlsx_path: Path, sheet_name: str) -> list[tuple[st
 # Match & insert posts
 # ──────────────────────────────────────────────────────────────
 def _match_or_create_post(post: dict) -> int:
-    """Retourne post_id en DB. Crée un post status='external' si pas existant."""
+    """Retourne post_id en DB. Crée un post status='external' si pas existant.
+
+    Cascade de matching (du plus sûr au plus heuristique) :
+    1. linkedin_activity_id exact — rempli au 1er match par date, fiable ensuite.
+    2. linkedin_post_id LIKE %aid% — legacy : doublons 'external' déjà créés avec
+       urn:li:activity:N comme linkedin_post_id.
+    3. Date de publication — l'export XLSX expose urn:li:activity:N alors que l'API
+       de publication renvoie urn:li:ugcPost/share:M (IDs DIFFÉRENTS, aucun mapping
+       arithmétique). Le pipeline garantissant 1 post/jour, le match par date est
+       déterministe ; on mémorise alors l'activity_id pour les imports suivants.
+    """
     init_db()
     aid = post["activity_id"]
     date_iso = post.get("date") or datetime.now().strftime("%Y-%m-%d")
+
+    matched = find_post_by_activity_id(aid)
+    if matched is not None:
+        return matched
+
     with _conn() as conn:
         row = conn.execute(
             "SELECT id FROM posts WHERE linkedin_post_id LIKE ? AND status IN ('published','external') LIMIT 1",
             (f"%{aid}%",),
         ).fetchone()
-        if row:
-            return row[0]
+    if row:
+        set_activity_id(row[0], aid)
+        return row[0]
+
+    by_date = find_published_post_by_date(date_iso) if post.get("date") else None
+    if by_date is not None:
+        set_activity_id(by_date, aid)
+        print(f"[import] match par date {date_iso} → post #{by_date} (activity {aid})", file=sys.stderr)
+        return by_date
+
+    with _conn() as conn:
         # Pas trouvé → create as external (post manuel ou import historique)
         cur = conn.execute(
             """INSERT INTO posts (published_at, topic, slug, format, keywords,
@@ -251,6 +280,29 @@ def _match_or_create_post(post: dict) -> int:
         return cur.lastrowid
 
 
+def heal_external_duplicates() -> dict:
+    """Répare les dégâts du matching legacy : fusionne chaque post 'external' dont la date
+    correspond à un post 'published' (= doublon créé parce que l'activity_id de l'export
+    ne matchait pas l'urn ugcPost/share), et purge les lignes analytics non-monotones
+    héritées des imports fenêtrés. Idempotent."""
+    init_db()
+    merged = 0
+    with _conn() as conn:
+        externals = conn.execute(
+            "SELECT id, date(published_at) FROM posts WHERE status = 'external'"
+        ).fetchall()
+    for ext_id, ext_date in externals:
+        target = find_published_post_by_date(ext_date)
+        if target is not None:
+            merge_post_into(ext_id, target)
+            merged += 1
+            print(f"[heal] external #{ext_id} ({ext_date}) fusionné dans post #{target}", file=sys.stderr)
+    purged = purge_non_monotonic_analytics()
+    if purged:
+        print(f"[heal] {purged} lignes analytics fenêtrées (non-monotones) purgées", file=sys.stderr)
+    return {"externals_merged": merged, "rows_purged": purged}
+
+
 # ──────────────────────────────────────────────────────────────
 # Main : import_xlsx
 # ──────────────────────────────────────────────────────────────
@@ -266,10 +318,15 @@ def import_xlsx(path: Path) -> dict:  # noqa: PLR0912, PLR0915
     xls = pd.ExcelFile(path, engine="openpyxl")
     print(f"[import] feuilles détectées : {xls.sheet_names}", file=sys.stderr)
 
+    # Auto-réparation des doublons external→published créés par le matching legacy
+    # (et purge des valeurs fenêtrées). No-op si rien à réparer.
+    heal_external_duplicates()
+
     summary = {
         "posts_matched": 0,
         "posts_external_created": 0,
         "metrics_written": 0,
+        "metrics_skipped_windowed": 0,
         "follower_days_imported": 0,
         "demo_rows_imported": 0,
         "warnings": [],
@@ -295,13 +352,17 @@ def import_xlsx(path: Path) -> dict:  # noqa: PLR0912, PLR0915
                     summary["posts_matched"] += 1
                 else:
                     summary["posts_external_created"] += 1
-                # Métriques
+                # Métriques (rejet monotone : un export fenêtré ne doit pas écraser le cumul)
                 if p["impressions"] is not None:
-                    upsert_analytics(post_id, "IMPRESSION", p["impressions"])
-                    summary["metrics_written"] += 1
+                    if upsert_analytics(post_id, "IMPRESSION", p["impressions"]):
+                        summary["metrics_written"] += 1
+                    else:
+                        summary["metrics_skipped_windowed"] += 1
                 if p["interactions"] is not None:
-                    upsert_analytics(post_id, "INTERACTION", p["interactions"])
-                    summary["metrics_written"] += 1
+                    if upsert_analytics(post_id, "INTERACTION", p["interactions"]):
+                        summary["metrics_written"] += 1
+                    else:
+                        summary["metrics_skipped_windowed"] += 1
         except (KeyError, ValueError, AttributeError, IndexError, OSError) as e:
             # Parser pandas / cellule manquante / format LinkedIn modifié — on garde le warning
             summary["warnings"].append(f"posts sheet failed: {e}")
@@ -359,8 +420,16 @@ def import_csv(path: Path) -> dict:
 
 
 def main(argv: list[str]) -> int:
+    if len(argv) == 2 and argv[1] == "--heal":
+        h = heal_external_duplicates()
+        print(
+            f"[heal] DONE — {h['externals_merged']} doublons fusionnés, "
+            f"{h['rows_purged']} lignes fenêtrées purgées",
+            file=sys.stderr,
+        )
+        return 0
     if len(argv) != 2:
-        print("Usage: import_analytics_csv.py <export.xlsx>", file=sys.stderr)
+        print("Usage: import_analytics_csv.py <export.xlsx> | --heal", file=sys.stderr)
         return 2
     path = Path(argv[1])
     if not path.exists():
@@ -371,7 +440,7 @@ def main(argv: list[str]) -> int:
     print(
         f"[import] DONE — posts matched={s['posts_matched']}, "
         f"external created={s['posts_external_created']}, "
-        f"metrics={s['metrics_written']}, "
+        f"metrics={s['metrics_written']} (+{s['metrics_skipped_windowed']} fenêtrées rejetées), "
         f"follower days={s['follower_days_imported']}, "
         f"demo rows={s['demo_rows_imported']}",
         file=sys.stderr,

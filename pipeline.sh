@@ -207,14 +207,16 @@ print(json.dumps(arts[:1], ensure_ascii=False))
 import json, sys, pathlib
 data = json.load(open(sys.argv[1]))
 out = pathlib.Path(sys.argv[2])
-(out / "carousel.md").write_text(
-    "\n\n".join(f"SLIDE {i+1}: {s}" for i, s in enumerate(data["slides"])),
-    encoding="utf-8",
-)
+if data["slides"]:
+    (out / "carousel.md").write_text(
+        "\n\n".join(f"SLIDE {i+1}: {s}" for i, s in enumerate(data["slides"])),
+        encoding="utf-8",
+    )
 (out / "post.txt").write_text(data["post_text"], encoding="utf-8")
 (out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
+# slides.json = structure riche (kind/main/sub/items) consommée par html_to_pdf.js
 (out / "slides.json").write_text(
-    json.dumps(data["slides"], ensure_ascii=False),
+    json.dumps(data.get("slides_structured", []), ensure_ascii=False),
     encoding="utf-8",
 )
 PY
@@ -246,11 +248,15 @@ draft = {
     "article_title": data.get("article_title", ""),
     "article_url": data.get("article_url", ""),
     "format": data["format"],
+    "registre": data.get("registre", ""),
+    "story_id": data.get("story_id", ""),
+    "comment_mode": data.get("comment_mode", ""),
     "topic": data["topic"],
     "slug": data["slug"],
     "post_text": data["post_text"],
     "first_comment": data["first_comment"],
     "slides_structured": data.get("slides_structured", []),
+    "text_body": data.get("text_body", ""),
     "hook_winner_formula": data["hook_winner_formula"],
     "hook_winner_reason": data["hook_winner_reason"],
     "hook_variants": data.get("hook_variants", []),
@@ -323,12 +329,14 @@ if [ "$DRY_RUN" = "false" ] && [ -f "$PAUSE_FLAG" ]; then
 fi
 
 # ── Guard : pas plus d'1 post / jour (via history.py) ───────
+# Ne s'applique pas aux dry-runs : ils écrivent status='test', jamais 'published' —
+# même intention que le kill-switch ci-dessus (tests autorisés pour qualif contenu).
 if ! ALREADY=$(python3 -c "from history import posted_today; print('1' if posted_today() else '0')" 2>>"$LOG_FILE"); then
     log "ERROR: history check failed"
     metric event "error" step "history_check"
     exit 1
 fi
-if [ "$ALREADY" = "1" ]; then
+if [ "$ALREADY" = "1" ] && [ "$DRY_RUN" = "false" ]; then
     log "SKIP: already posted today"
     metric event "skip_already_posted_today"
     exit 0
@@ -423,14 +431,16 @@ print(json.dumps([arts[idx]] if idx < len(arts) else [], ensure_ascii=False))
 import json, sys, pathlib
 data = json.load(open(sys.argv[1]))
 out = pathlib.Path(sys.argv[2])
-(out / "carousel.md").write_text(
-    "\n\n".join(f"SLIDE {i+1}: {s}" for i, s in enumerate(data["slides"])),
-    encoding="utf-8",
-)
+if data["slides"]:
+    (out / "carousel.md").write_text(
+        "\n\n".join(f"SLIDE {i+1}: {s}" for i, s in enumerate(data["slides"])),
+        encoding="utf-8",
+    )
 (out / "post.txt").write_text(data["post_text"], encoding="utf-8")
 (out / "first_comment.txt").write_text(data["first_comment"], encoding="utf-8")
+# slides.json = structure riche (kind/main/sub/items) consommée par html_to_pdf.js
 (out / "slides.json").write_text(
-    json.dumps(data["slides"], ensure_ascii=False),
+    json.dumps(data.get("slides_structured", []), ensure_ascii=False),
     encoding="utf-8",
 )
 PY
@@ -492,6 +502,7 @@ post_pk = record_post(
     tokens_out=data.get("tokens_out"),
     tokens_cache_write=data.get("tokens_cache_write"),
     tokens_cache_read=data.get("tokens_cache_read"),
+    registre=data.get("registre"),
 )
 record_hook_variants(
     post_id=post_pk,
@@ -514,7 +525,7 @@ from linkedin_post import post_document_carousel, post_text_only
 post_dir = pathlib.Path(os.environ["POST_DIR_ENV"])
 data = json.load(open(post_dir / "result.json"))
 text = (post_dir / "post.txt").read_text(encoding="utf-8")
-title = data.get("topic", "")[:200]
+title = (data.get("visual_hook") or data.get("topic", ""))[:200]
 
 fmt = data["format"]
 if fmt == FORMAT_CAROUSEL:
@@ -568,6 +579,7 @@ post_pk = record_post(
     tokens_out=data.get("tokens_out"),
     tokens_cache_write=data.get("tokens_cache_write"),
     tokens_cache_read=data.get("tokens_cache_read"),
+    registre=data.get("registre"),
 )
 record_hook_variants(
     post_id=post_pk,

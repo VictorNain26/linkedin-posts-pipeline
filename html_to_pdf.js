@@ -1,10 +1,14 @@
 // LinkedIn carousel PDF generator.
-// Input  : slides.json (list of strings, each "main\nsub")
+// Input  : slides.json — liste d'objets {kind, main, sub, items} (format structuré v2).
+//          Rétrocompat : accepte aussi les strings legacy "main\nsub".
 // Output : PDF portrait 1080x1350 (best practice 2026)
 //
-// Toutes les slides partagent la même base visuelle (header logo + accent-bar
-// + main-text + sub-text + footer). La cover se distingue par un titre plus
-// gros (CSS .slide-cover) ; la dernière slide par la couleur CTA (.slide-cta).
+// Kinds de slides :
+//   standard — phrase principale (+ mots pivots **accentués** en bleu) + sub
+//   list     — titre + items numérotés (badges accent, fini la liste en paragraphe gris)
+//   number   — data callout : UN chiffre géant en accent + légende
+// La cover se distingue par un titre plus gros (.slide-cover) ; la dernière
+// slide par la couleur CTA (.slide-cta). Progress dots dans le footer.
 
 const puppeteer = require('puppeteer');
 const fs = require('fs');
@@ -24,6 +28,32 @@ const HTML_ESCAPES = {
 
 function escapeHtml(str) {
   return String(str).replace(/[&<>"]/g, (c) => HTML_ESCAPES[c]);
+}
+
+// **mot** → <span class="accent">mot</span> (APRÈS escapeHtml : le markup accent
+// est généré ici, jamais issu du contenu brut).
+function accentify(str) {
+  return escapeHtml(str).replace(/\*\*(.+?)\*\*/g, '<span class="accent">$1</span>');
+}
+
+// Normalise une slide : objet structuré v2 {kind, main, sub, items} ou string legacy.
+function normalizeSlide(raw) {
+  if (typeof raw === 'string') {
+    const parsed = parseSlideText(raw);
+    return { kind: 'standard', main: parsed.main, sub: parsed.sub, items: [] };
+  }
+  return {
+    kind: raw.kind || 'standard',
+    main: raw.main || '',
+    sub: raw.sub || '',
+    items: Array.isArray(raw.items) ? raw.items : [],
+  };
+}
+
+function progressDots(index, total) {
+  const dots = Array.from({ length: total }, (_, i) =>
+    `<span class="dot${i === index ? ' active' : ''}"></span>`).join('');
+  return `<div class="progress-dots">${dots}</div>`;
 }
 
 function slideClass(i, total) {
@@ -47,12 +77,12 @@ function fileUri(filePath) {
 function renderCover({ index, total, main, sub, logoUri }) {
   // Cover : disposition spécifique — titre en haut, signature en bas, pas de header dupliqué.
   const logoTag = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
-  const subBlock = sub ? `<div class="sub-text">${escapeHtml(sub)}</div>` : '';
+  const subBlock = sub ? `<div class="sub-text">${accentify(sub)}</div>` : '';
   return `
     <div class="${slideClass(index, total)}">
       <div class="cover-headline">
         <div class="accent-bar"></div>
-        <div class="main-text">${escapeHtml(main)}</div>
+        <div class="main-text">${accentify(main)}</div>
         ${subBlock}
       </div>
       <div class="cover-bottom">
@@ -68,18 +98,45 @@ function renderCover({ index, total, main, sub, logoUri }) {
     </div>`;
 }
 
-function renderStandard({ index, total, main, sub, logoUri }) {
+function renderStandard({ index, total, kind, main, sub, items, logoUri }) {
   // Body + CTA : disposition uniforme — header logo en haut, content centré, footer en bas.
   const isLast = index === total - 1;
   const logoTag = logoUri ? `<img src="${logoUri}" alt="Victor Lenain">` : '';
-  const subBlock = sub ? `<div class="sub-text">${escapeHtml(sub)}</div>` : '';
   const saveCue = isLast
     ? '<div class="save-cue"><span class="save-cue-badge">ASTUCE</span> Enregistre ce post pour y revenir</div>'
     : '';
-  const nextArrow = isLast ? '' : '<span class="next-arrow">&rarr;</span>';
+  const nextArrow = isLast ? '<span></span>' : '<span class="next-arrow">&rarr;</span>';
+
+  let content;
+  if (kind === 'number') {
+    // Data callout : le chiffre est le héros, pas de markup accent dedans (déjà bleu)
+    const subBlock = sub ? `<div class="sub-text">${accentify(sub)}</div>` : '';
+    content = `
+        <div class="accent-bar"></div>
+        <div class="big-number">${escapeHtml(main)}</div>
+        ${subBlock}`;
+  } else if (kind === 'list' && items.length > 0) {
+    const itemsHtml = items.map((item, n) => `
+          <div class="list-item">
+            <div class="num">${n + 1}</div>
+            <div class="item-text">${accentify(item)}</div>
+          </div>`).join('');
+    const subBlock = sub ? `<div class="sub-text">${accentify(sub)}</div>` : '';
+    content = `
+        <div class="accent-bar"></div>
+        <div class="main-text">${accentify(main)}</div>
+        <div class="list-items">${itemsHtml}</div>
+        ${subBlock}`;
+  } else {
+    const subBlock = sub ? `<div class="sub-text">${accentify(sub)}</div>` : '';
+    content = `
+        <div class="accent-bar"></div>
+        <div class="main-text">${accentify(main)}</div>
+        ${subBlock}`;
+  }
 
   return `
-    <div class="${slideClass(index, total)}">
+    <div class="${slideClass(index, total)} slide-kind-${kind}">
       <div class="header">
         ${logoTag}
         <div class="header-text">
@@ -88,14 +145,12 @@ function renderStandard({ index, total, main, sub, logoUri }) {
         </div>
       </div>
       <span class="slide-number">${index + 1} / ${total}</span>
-      <div class="body">
-        <div class="accent-bar"></div>
-        <div class="main-text">${escapeHtml(main)}</div>
-        ${subBlock}
+      <div class="body">${content}
         ${saveCue}
       </div>
       <div class="footer">
         <span>victorlenain.fr</span>
+        ${progressDots(index, total)}
         ${nextArrow}
       </div>
     </div>`;
@@ -109,9 +164,9 @@ function buildHtml(slides) {
   const template = fs.readFileSync(TEMPLATE_PATH, 'utf8');
   const logoUri = fs.existsSync(LOGO_PATH) ? fileUri(LOGO_PATH) : '';
   const html = slides
-    .map((text, i) => {
-      const { main, sub } = parseSlideText(text);
-      return renderSlide({ index: i, total: slides.length, main, sub, logoUri });
+    .map((raw, i) => {
+      const slide = normalizeSlide(raw);
+      return renderSlide({ index: i, total: slides.length, ...slide, logoUri });
     })
     .join('\n');
   return template.replace('{{SLIDES_HTML}}', html);

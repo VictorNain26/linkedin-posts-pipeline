@@ -1,0 +1,23 @@
+{
+  "_readme": [
+    "Banque d'anecdotes RÉELLES pour le registre 'preuve' (retour terrain).",
+    "1. Copie ce fichier vers ~/linkedin-posts-data/state/victor_stories.json",
+    "2. Remplace l'exemple par 5-10 expériences VÉCUES (chiffres exacts, pas embellis)",
+    "3. Les stories dont l'id commence par 'EXEMPLE' sont ignorées par le pipeline",
+    "Tant que le fichier est absent ou vide, le registre 'preuve' est sauté — le pipeline n'invente jamais d'histoire."
+  ],
+  "stories": [
+    {
+      "id": "EXEMPLE-remplace-moi",
+      "title": "Agent de tri des tickets support pour une PME e-commerce",
+      "context": "PME e-commerce ~30 personnes, support client débordé, mission 6 semaines fin 2025.",
+      "facts": [
+        "Tri et qualification automatiques des tickets entrants par un agent Claude",
+        "Temps de première réponse divisé par 2, mesuré sur 4 semaines",
+        "Coût API : ~40 € par mois en production"
+      ],
+      "lesson": "Le gain venait du tri, pas de la rédaction des réponses. Automatiser la bonne étape compte plus que l'outil choisi.",
+      "topics": ["support client", "agents", "automatisation", "coût"]
+    }
+  ]
+}

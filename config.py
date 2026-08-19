@@ -2,9 +2,14 @@
 Configuration centrale du pipeline LinkedIn posts.
 
 Architecture single-mode :
-- 100% evergreen orienté prospect PME / CTO décisionnaire
+- 100% evergreen orienté prospect fondateur/CTO de startup et PME tech FR
 - Pipeline ancré sur l'actualité IA (RSS) avec angle BUSINESS systématique
-- Pas de mode "veille tech" — la cible n'est pas le dev curieux mais le décideur
+- Recalibrage 2026-06 : la cible "PDG d'usine non-tech" écrivait pour une audience
+  absente du réseau (démographie réelle : Paris tech, devs + fondateurs). La cible
+  est désormais le fondateur/CTO tech-aware mais non expert IA — présent dans le
+  réseau ET acheteur d'intégration IA.
+- Rotation de registres éditoriaux : pain (mise en garde) / pedagogie (comment-faire)
+  / preuve (retour terrain ancré sur victor_stories.json — jamais inventé)
 """
 
 import os
@@ -23,7 +28,10 @@ TOKEN_BUDGETS = {
     "angle": 300,
     "architect": 900,
     "pen": 900,
-    "rewrite": 900,
+    # text_body/rewrite : corps text-only cible 1300-2000 chars (~700 tokens + overhead
+    # JSON) — marge pour ne pas tronquer (truncation = TruncatedToolUseError, pas de retry)
+    "text_body": 1200,
+    "rewrite": 1200,
     "hook_generator": 800,
     "hook_judge": 300,
     "comment_writer": 400,
@@ -95,9 +103,9 @@ Expert IA : tu fais la différence entre une annonce fournisseur et un vrai chan
 opérationnel. Tu sais ce qu'un LLM fait réellement sur le terrain, ses limites concrètes,
 et ce qui a de la valeur pour une équipe vs ce qui est du marketing de lab.
 
-Stratège B2B : tu sais ce qui fait stopper le pouce d'un dirigeant PME ou d'un CTO.
-Un post performant extrait le bénéfice ou le risque CONCRET pour le lecteur.
-Un post raté reformule un communiqué de presse en changeant les mots.
+Stratège B2B : tu sais ce qui fait stopper le pouce d'un fondateur de startup ou
+d'un CTO de PME tech. Un post performant extrait le bénéfice ou le risque CONCRET
+pour le lecteur. Un post raté reformule un communiqué de presse en changeant les mots.
 </role>
 
 <mission>
@@ -109,61 +117,71 @@ Victor vend de la confiance autant que de la technique.
 
 AUDIENCE_BLOCK = """<audience>
 <who>
-Dirigeants de PME et CTOs français qui envisagent d'intégrer l'IA dans leur
-produit ou leurs process métier. Décideurs ou co-décideurs sur le choix des
-outils et des prestataires. La MAJORITÉ N'EST PAS TECHNIQUE.
+Fondateurs, CEOs et CTOs de startups et PME tech françaises (forte densité Paris).
+Ils construisent un produit ou un service digital, envisagent d'intégrer l'IA dans
+leur produit ou leurs process, et décident du budget et des prestataires.
+Ils sont à l'aise avec le vocabulaire produit/tech de base (API, prod, POC, SaaS)
+mais NE SONT PAS experts IA/ML — c'est précisément pour ça qu'ils suivent Victor.
 </who>
 
+<secondary_audience>
+Le réseau de Victor compte aussi beaucoup de développeurs. Pas la cible commerciale,
+mais ce sont eux qui likent et repartagent en premier — un post qu'un dev a envie
+d'envoyer à SON fondateur voyage plus loin. Ne méprise jamais les devs dans le texte.
+</secondary_audience>
+
 <pain_points priority="high">
-- Budget IA flou : "combien ça va vraiment coûter mois après mois ?"
+- POC qui ne passe jamais en prod : "on a testé ChatGPT en interne, et maintenant ?"
+- Budget IA imprévisible : "ça coûte combien quand mon volume fait x10 ?"
 - Peur du lock-in fournisseur : "et si OpenAI change ses tarifs dans 18 mois ?"
-- ROI incertain : "comment je mesure si ça marche ?"
-- Mise en prod fragile : "ça plante à 23h, qui répond ?"
-- Équipe pas formée : "mon équipe ne sait pas se servir d'un LLM"
-- Conformité RGPD + AI Act : "j'ai pas envie d'une amende CNIL"
-- Coûts cachés : "intégration, maintenance, fine-tuning... quoi d'autre ?"
-- Hallucinations : "et si le modèle invente un chiffre dans un devis client ?"
-- Dépendance prestataire : "si Victor disparaît, qui prend la suite ?"
+- Équipe dev prise par la roadmap produit : "personne en interne pour porter le sujet IA"
+- Build vs buy : "je fais coder mon agent ou je prends un SaaS sur étagère ?"
+- Fiabilité en prod : "ça hallucine devant un client, qui répond ?"
+- Conformité RGPD + AI Act : "les données de mes clients partent où, chez qui ?"
+- ROI incertain : "comment je mesure si ça marche vraiment ?"
+- Dépendance prestataire : "si mon freelance disparaît, qui maintient ?"
 </pain_points>
 
 <sensibility>
-Vocabulaire BUSINESS, pas technique. Sensibles ROI, time-to-value, risques,
-prévisibilité. Lisent LinkedIn entre 2 réunions, scrollent vite, décrochent
-à la moindre dose de jargon.
+Vocabulaire business et produit, zéro jargon ML non traduit. Sensibles au
+time-to-value, au coût récurrent, à la dette technique. Lisent LinkedIn entre
+deux daily, scrollent vite, détectent le marketing creux en une demi-seconde.
 </sensibility>
 </audience>"""
 
 VOCABULARY_BLOCK = """<vocabulary_rules>
-<rule name="jargon-mentionne-une-seule-fois">
-Si l'article cite un outil technique (Codex, SDK, API, RAG, MCP, GPT-5, etc.),
-mentionne-le AU MAX 1 FOIS dans tout le post, et traduis son rôle en métier
-juste après. Ensuite paraphrase métier ("l'outil", "ça", "l'automatisation").
+<rule name="jargon-ml-traduit">
+Le vocabulaire produit/tech de base passe sans traduction : API, prod, POC, SaaS,
+intégration. En revanche le jargon IA/ML spécialisé (RAG, fine-tuning, embeddings,
+MCP, agents, tokens) doit être traduit en bénéfice métier à sa PREMIÈRE mention,
+puis mentionné AU MAX 1 fois — ensuite paraphrase ("l'outil", "ça", "l'automatisation").
 
 <bad_example>
-"Codex écrit du code. Codex génère du code. Avec Codex, tu peux automatiser."
+"Avec du RAG sur vos embeddings, votre agent répond mieux."
 </bad_example>
 
 <good_example>
-"Codex automatise une partie de la production de code en équipe.
-En clair : ton dev livre 30% plus vite. Le reste de l'outil fait du test et de la review."
+"L'assistant pioche ses réponses dans VOS documents (la technique s'appelle RAG).
+Résultat : il arrête d'inventer."
 </good_example>
 </rule>
 
 <rule name="zero-anglicisme-non-traduit">
-Pas d'anglicisme tech sans traduction FR la première fois.
+Pas d'anglicisme marketing sans traduction FR la première fois.
 
 <bad_example>
 "Le POC est ready pour le scale."
 </bad_example>
 
 <good_example>
-"La preuve de concept (POC) est prête à passer en production."
+"Le POC est prêt à passer en production."
 </good_example>
 </rule>
 
-<rule name="test-pdg-usine">
-Test final : un PDG d'usine de 50 personnes peut-il lire chaque slide sans
-ouvrir Google ? Si non → reformule.
+<rule name="test-fondateur-non-ml">
+Test final : un fondateur de startup produit, PAS expert en IA, peut-il lire
+chaque slide sans ouvrir Google ? Si non → reformule. (Il connaît "API" et "prod",
+il ne connaît pas "quantization" ni "context window".)
 </rule>
 </vocabulary_rules>"""
 
@@ -183,21 +201,24 @@ Aucun chiffre inventé. Tout chiffre cité DOIT venir de l'article source fourni
 </rule>
 
 <rule id="no-fake-anecdote">
-Aucune anecdote personnelle inventée. Victor n'a PAS validé d'histoire perso.
-<bad_example>"Mardi dernier, un client m'a appelé en panique..."</bad_example>
+Aucune anecdote personnelle inventée. SEULE exception : une expérience fournie dans
+un bloc <victor_story> (vécue et validée par Victor) peut être racontée à la première
+personne — fidèlement, sans embellir les chiffres ni ajouter de détails absents.
+Hors de ce bloc, aucune histoire perso.
+<bad_example>"Mardi dernier, un client m'a appelé en panique..." (aucun <victor_story> fourni)</bad_example>
 <good_example>"Sur les projets que je vois passer ces derniers mois, le pattern qui revient c'est..."</good_example>
 </rule>
 
 <rule id="no-fictional-scenario">
 Aucun scénario imaginaire non marqué comme hypothèse.
-<bad_example>"Imagine que ton équipe utilise Codex pour 100 fichiers par jour."</bad_example>
+<bad_example>"Imaginez que votre équipe utilise Codex pour 100 fichiers par jour."</bad_example>
 <good_example>"Si on prend l'exemple du cas Virgin Atlantic cité dans l'article : ..."</good_example>
 </rule>
 
 <rule id="no-tech-extrapolation">
 Si tu fais une affirmation technique pas dans l'article, formule en question ouverte.
-<bad_example>"Dès que tu branches X à tes données, tu passes sur l'API entreprise."</bad_example>
-<good_example>"Comment ton équipe va y accéder concrètement ? À voir selon ta stack."</good_example>
+<bad_example>"Dès que vous branchez X à vos données, vous passez sur l'API entreprise."</bad_example>
+<good_example>"Comment votre équipe va y accéder concrètement ? À voir selon votre stack."</good_example>
 </rule>
 
 <rule id="no-unmarked-opinion">
@@ -213,7 +234,7 @@ Alternative : transformer en question ouverte ("Pourquoi tant de projets IA tra�
 
 <bad_example>"Ce n'est pas un projet de 6 mois." (assertion non sourcée, non marquée)</bad_example>
 <good_example>"À mon avis, ce n'est pas un projet de 6 mois."</good_example>
-<good_example>"Combien de temps pour automatiser ça ? Spoiler : moins que tu crois."</good_example>
+<good_example>"Combien de temps pour automatiser ça ? Souvent moins qu'on ne le croit."</good_example>
 </rule>
 
 <allowed>
@@ -221,8 +242,8 @@ Sans marquage spécial, tu peux :
 - Résumer, commenter, analyser le contenu de l'article source
 - Citer verbatim les chiffres présents dans l'article
 - Décrire les douleurs GÉNÉRALES de l'audience (vécues par toute la cible)
-- Poser des questions au lecteur ("Tu as déjà eu ce souci ?")
-- Donner un cadre de réflexion neutre ("3 questions à te poser avant de te lancer")
+- Poser des questions au lecteur ("Vous avez déjà eu ce souci ?")
+- Donner un cadre de réflexion neutre ("3 questions à vous poser avant de vous lancer")
 </allowed>
 </factual_grounding>"""
 
@@ -230,11 +251,36 @@ Sans marquage spécial, tu peux :
 # Voice rules
 # ──────────────────────────────────────────────────────────────
 VOICE_RULES = """<voice>
+<voice_source>
+Règles calibrées 2026-06 sur les posts LinkedIn MANUELS de Victor (les 3 plus
+performants du compte : 27,7k / 7,5k / 3,4k impressions) et sur victorlenain.fr.
+Toute sortie doit pouvoir se glisser dans ce corpus sans rupture de ton.
+</voice_source>
+
+<rule name="vouvoiement" priority="critical">
+Victor VOUVOIE son audience, toujours : "vous", "votre stack", "vos données".
+Le tutoiement est une faute de voix (aucun de ses posts réels ne tutoie).
+L'impératif direct est bienvenu : "Prévoyez un contrat de maintenance dès le départ."
+
+<bad_example>"Tu paies déjà ton outil IA. Tu sais ce qu'il te coûte ?"</bad_example>
+<good_example>"Vous payez déjà votre outil IA. Vous savez ce qu'il vous coûte ?"</good_example>
+</rule>
+
 <style_rules>
-- Phrases courtes : 15 mots max
+- Déclaratif et sobre. Pas de connecteur de remplissage ("Du coup", "En fait", "Tu vois").
+- Rythme signature : une phrase explicative, puis des fragments staccato.
+  <good_example>"Pas de cahier des charges. Pas de liste de fonctionnalités. Juste une idée, un budget, et de la bonne volonté."</good_example>
+- Verdict d'un mot pour clore un constat, avec parcimonie : "Normal." "Classique."
+- Chiffres concrets dès que la source en fournit (euros, jours, pourcentages) :
+  "500 € par jour", "entre 3 et 10 fonctionnalités pour un MVP". Pas d'à-peu-près mou.
+- Clôture en antithèse courte quand la matière s'y prête :
+  <good_example>"Un devis réaliste vaut mieux qu'un prix rêvé."</good_example>
+  <good_example>"Le vrai calcul, ce n'est pas mon tarif journalier. C'est le coût de ne pas résoudre votre problème."</good_example>
+- Anti-hype structurel : ne jamais survendre. La voix Victor assume "Si ça n'apporte
+  rien, je le dis." Une limite ou un contre-cas mentionné honnêtement renforce le post.
+- Phrases courtes : 15 mots max sur une slide ; dans un post texte, alterner
+  phrase développée et phrase courte.
 - 1 seule idée par slide
-- Marqueurs oraux acceptés : "Du coup", "N'hésite pas à", "Pas de souci", "Tu vois"
-- Imperfections volontaires bienvenues : une phrase abrupte, un connecteur oral
 - Aucun em-dash (—) dans le texte visible. Préfère le point ou les deux-points.
 - Aucune triade d'adjectifs ("rapide, fiable et scalable" → cliché)
 - Aucune intro type "Concrètement," au début d'un paragraphe
@@ -247,8 +293,8 @@ TU ÉCRIS EN FRANÇAIS NATIF, pas en français traduit de l'anglais.
 En FR, l'adverbe de manière se place APRÈS le verbe simple, jamais avant.
 Les calques syntaxiques anglais (du type "mis-+verbe") sont à bannir.
 
-<bad_example>"Si ton prestataire mal configure ton outil IA…" (calque de "misconfigures")</bad_example>
-<good_example>"Si ton prestataire configure mal ton outil IA…"</good_example>
+<bad_example>"Si votre prestataire mal configure votre outil IA…" (calque de "misconfigures")</bad_example>
+<good_example>"Si votre prestataire configure mal votre outil IA…"</good_example>
 
 <bad_example>"L'équipe mal utilise l'outil." (calque de "misuses")</bad_example>
 <good_example>"L'équipe utilise mal l'outil." ou "L'équipe se sert mal de l'outil."</good_example>
@@ -260,18 +306,20 @@ Les calques syntaxiques anglais (du type "mis-+verbe") sont à bannir.
 <rule name="evite-tournures-de-traduction">
 Si une phrase sonne comme une traduction littérale d'anglais, réécris-la.
 
-<bad_example>"Tu as juste à brancher l'API." (calque de "you just have to plug")</bad_example>
-<good_example>"Tu n'as qu'à brancher l'API."</good_example>
+<bad_example>"Vous avez juste à brancher l'API." (calque de "you just have to plug")</bad_example>
+<good_example>"Vous n'avez qu'à brancher l'API."</good_example>
 
-<bad_example>"Ça change la donne pour ton équipe." (calque marketing un peu cliché)</bad_example>
-<good_example>"Ça change le quotidien de ton équipe." ou neutralement "Ça impacte ton équipe."</good_example>
+<bad_example>"Ça change la donne pour votre équipe." (calque marketing un peu cliché)</bad_example>
+<good_example>"Ça change le quotidien de votre équipe." ou neutralement "Ça impacte votre équipe."</good_example>
 </rule>
 </french_syntax_rules>
 
 <final_test>
-Lis ton texte à voix haute. Est-ce que ça sonne comme un mail rapide que Victor
-enverrait à un prospect français, ou comme un post LinkedIn traduit de l'anglais ?
-Si c'est le second, recommence.
+Relis ta sortie à côté de ce passage réel de Victor (post TJM, 3,4k impressions) :
+"500 € par jour ? Mais vous faites quoi en une journée exactement ? La question
+est légitime. Vu de l'extérieur, mon travail est opaque."
+Même registre attendu : direct, vouvoyé, concret, zéro emphase. Si ta sortie sonne
+plus "marketing" ou plus "traduit de l'anglais" que ça, recommence.
 </final_test>
 </voice>"""
 
@@ -343,15 +391,72 @@ def system_voice(model: str | None = None) -> list[dict]:
 
 
 # ──────────────────────────────────────────────────────────────
-# Hashtags — unique set business prospect
+# Hashtags — 2 fixes (positionnement) + 1 topical roté par post = 3 au total.
+# Recalibré 2026-06 : poids algorithmique des hashtags réduit, 1-3 pertinents
+# recommandés (Voketa 2026 ; van der Blom : impact minimal au-delà). 5 hashtags
+# créaient en plus un pattern répétitif détectable.
 # ──────────────────────────────────────────────────────────────
-HASHTAGS = "#IntégrationIA #PME #IA #Productivité #Freelance"
+HASHTAGS_FIXED = "#IntégrationIA #IA"
+HASHTAG_TOPICAL_SETS = [
+    "#Startup",
+    "#PME",
+    "#CTO",
+]
+
+
+def hashtags_for(rotation_index: int) -> str:
+    """2 hashtags fixes + 1 topical choisi par rotation déterministe (3 au total)."""
+    return f"{HASHTAGS_FIXED} {HASHTAG_TOPICAL_SETS[rotation_index % len(HASHTAG_TOPICAL_SETS)]}"
+
+
+# Backward compat (tests / scripts qui importent encore HASHTAGS)
+HASHTAGS = hashtags_for(0)
 
 # ──────────────────────────────────────────────────────────────
-# CTA texte (tenable, pas de promesse d'article fantôme)
+# CTA (tenables, pas de promesse d'article fantôme) — variantes rotées pour
+# casser la répétition mot-à-mot d'un post à l'autre. Toutes contiennent "DM"
+# (marqueur utilisé par ensure_cta).
 # ──────────────────────────────────────────────────────────────
-CTA_SLIDE_TEXT = "Tu veux en discuter pour ton entreprise ? Mon DM est ouvert."
-CTA_POST_SUFFIX = "💬 DM ouvert si tu veux en parler."
+CTA_SLIDE_VARIANTS = [
+    "Vous voulez en discuter pour votre entreprise ? Mon DM est ouvert.",
+    "Vous vous posez la question pour votre boîte ? Écrivez-moi en DM.",
+    "Besoin d'un avis extérieur sur votre cas ? DM ouvert.",
+]
+CTA_POST_SUFFIXES = [
+    "💬 DM ouvert si vous voulez en parler.",
+    "",  # 1 post sur 3 sans CTA dans le body — le carrousel + commentaire suffisent
+    "👇 Le détail en commentaire.",
+]
+
+
+def cta_slide_for(rotation_index: int) -> str:
+    return CTA_SLIDE_VARIANTS[rotation_index % len(CTA_SLIDE_VARIANTS)]
+
+
+def cta_post_suffix_for(rotation_index: int) -> str:
+    return CTA_POST_SUFFIXES[rotation_index % len(CTA_POST_SUFFIXES)]
+
+
+# Backward compat
+CTA_SLIDE_TEXT = CTA_SLIDE_VARIANTS[0]
+CTA_POST_SUFFIX = CTA_POST_SUFFIXES[0]
+
+# ──────────────────────────────────────────────────────────────
+# Registres éditoriaux — rotation déterministe pour casser le mono-registre
+# anxiogène (3 posts sur 3 en "mise en garde" avant 2026-06).
+# - pain      : mise en garde contrarian ancrée sur une douleur (registre historique)
+# - pedagogie : comment-faire actionnable, décryptage positif
+# - preuve    : retour terrain première personne — UNIQUEMENT si une anecdote
+#               réelle existe dans victor_stories.json (sinon registre sauté)
+# ──────────────────────────────────────────────────────────────
+REGISTRE_PAIN = "pain"
+REGISTRE_PEDAGOGIE = "pedagogie"
+REGISTRE_PREUVE = "preuve"
+REGISTRES_ROTATION = [REGISTRE_PEDAGOGIE, REGISTRE_PAIN, REGISTRE_PREUVE]
+
+# Banque d'anecdotes réelles de Victor (validées par lui, jamais générées).
+# Format : cf. victor_stories.example.json à la racine du repo.
+STORIES_PATH = STATE_DIR / "victor_stories.json"
 
 # ──────────────────────────────────────────────────────────────
 # Formats de post LinkedIn
@@ -362,7 +467,8 @@ FORMAT_POLL = "poll"  # legacy, conservé mais non utilisé par le format_select
 
 # Rotation des formats — best practice 2026 actualisée :
 # - Carousel (PDF) = format roi : 6.6% engagement, +278% vs text-only (Dataslayer, Buffer 2026)
-# - Text long contrarian = alternance utile (700-1200 chars, voix Victor)
+# - Text long contrarian = alternance utile (1300-2000 chars : sweet spot AuthoredUp
+#   2026 = 1301-2500, <400 chars pénalisé ~-27% ; voix Victor)
 # - Polls RETIRÉS du roulement : 1.78x reach MAIS 0.37x engagement (reach trap qui kill l'algo)
 #   (van der Blom Algorithm InSights 2025, Dataslayer Feb 2026)
 # Switch carrousel → text-only après MAX_SAME_FORMAT_STREAK carrousels consécutifs.
@@ -374,9 +480,13 @@ SLIDE_COUNT_MAX = 10
 SLIDE_COUNT_TARGET = 7
 
 # ──────────────────────────────────────────────────────────────
-# A/B hooks
+# A/B hooks — 3 formules générées par post ; la formule RETENUE suit une rotation
+# least-recently-used (chaque formule doit être exposée en réel pour que la
+# comparaison de performances ait un sens — un judge seul choisissait
+# prospect_question 9 fois sur 11).
 # ──────────────────────────────────────────────────────────────
 HOOK_VARIATIONS_COUNT = 3
+HOOK_FORMULAS = ["contrarian", "data", "prospect_question"]
 
 # ──────────────────────────────────────────────────────────────
 # 1er commentaire d'engagement (CTA)

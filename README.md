@@ -1,54 +1,64 @@
 # LinkedIn Posts Auto-Pipeline
 
-Pipeline autonome pour le compte LinkedIn de Victor Lenain : RSS → 8 agents Claude → multi-format post → analytics → rapport hebdo.
+Pipeline pour le compte LinkedIn de Victor Lenain : RSS → agents Claude → post multi-format → approbation dashboard → analytics → learnings hebdo.
 
-**Objectif** : 3 posts/semaine (mar/mer/jeu 10h30, evergreen prospect PME/CTO), sans validation manuelle, avec A/B testing des hooks et tracking complet.
+**Objectif** : 3 posts/semaine (mar/mer/jeu, publication 10h30 après approbation dashboard), cible **fondateurs/CTO de startups et PME tech FR**, avec rotation de registres éditoriaux (pain / pédagogie / preuve), rotation honnête des formules de hook, et tracking complet.
 
-**Stack** : "Share on LinkedIn" (scope `w_member_social`, self-serve sans review). Publication OK. Analytics via export CSV manuel hebdo (cf. `import_analytics_csv.py`) — l'API analytics nécessite Community Management API, inaccessible en perso.
+**Stack** : "Share on LinkedIn" (scope `w_member_social`, self-serve sans review). Publication OK. Analytics via export XLSX manuel hebdo (cf. `import_analytics_csv.py`) — l'API analytics nécessite Community Management API, inaccessible en perso.
 
 ## Architecture
 
 ```
-                  ┌─────────────────────────────────┐
-  RSS sources ──► │  rss_fetch.py (Haiku scoring)   │
-                  └────────────┬────────────────────┘
+                  ┌─────────────────────────────────────────┐
+  RSS sources ──► │  rss_fetch.py (Haiku scoring)           │  Phase 1 (08h00)
+                  └────────────┬────────────────────────────┘
                                ▼
-                  ┌─────────────────────────────────┐
-                  │  generate_post.py — 8 agents :  │
-                  │   1. Pain Excavator             │
-                  │   2. Angle Scout                │
-                  │   3. Slide Architect            │
-                  │   4. Victor's Pen               │
-                  │   5. Anti-AI Detector           │
-                  │   6. Hook Generator (3 variants)│
-                  │   7. Hook Judge                 │
-                  │   8. Engagement Comment Writer  │
-                  └────────────┬────────────────────┘
+                  ┌─────────────────────────────────────────┐
+                  │  Décisions AVANT génération :            │  Phase 2 (09h00)
+                  │   format_selector.select_format()        │
+                  │     (carousel / text — déterministe)     │
+                  │   format_selector.select_registre()      │
+                  │     (pain / pedagogie / preuve — LRU)    │
+                  └────────────┬────────────────────────────┘
                                ▼
-                  ┌─────────────────────────────────┐
-                  │  format_selector.py             │
-                  │  (carousel / text / poll)       │
-                  └────────────┬────────────────────┘
+                  ┌─────────────────────────────────────────┐
+                  │  generate_post.py — agents :             │
+                  │   1. Pain Excavator                      │
+                  │   2. Angle Scout (par registre + story)  │
+                  │   ├─ carousel : 3. Slide Architect       │
+                  │   │  (kinds std/list/number) → 4. Pen    │
+                  │   └─ text : T. Text Writer (1300-2000 ch)│
+                  │   5. Anti-AI Detector (slides OU texte)  │
+                  │   5b. Factual Check (article + story)    │
+                  │   6. Hook Generator (3 × hook+body_lines)│
+                  │   7. Hook Judge (formule cible + veto)   │
+                  │   8. First Comment (pitch 1/3, valeur 2/3)│
+                  └────────────┬────────────────────────────┘
                                ▼
-                  ┌─────────────────────────────────┐
-                  │  html_to_pdf.js (si carousel)   │
-                  └────────────┬────────────────────┘
+                  ┌─────────────────────────────────────────┐
+                  │  html_to_pdf.js (si carousel)            │
+                  │  slides structurées, accents, dots       │
+                  └────────────┬────────────────────────────┘
                                ▼
-                  ┌─────────────────────────────────┐
-                  │  linkedin_post.py               │
-                  │   - post_document_carousel      │
-                  │   - post_text_only              │
-                  │   - post_poll                   │
-                  │   - post_first_comment          │
-                  └────────────┬────────────────────┘
+                  ┌─────────────────────────────────────────┐
+                  │  Approbation dashboard (page ✅)          │  ── humain ──
+                  └────────────┬────────────────────────────┘
                                ▼
-                  ┌─────────────────────────────────┐
-                  │  history.py SQLite              │
-                  │   - posts                       │
-                  │   - hook_variants (A/B winners) │
-                  │   - post_analytics              │
-                  │   - format_history              │
-                  └─────────────────────────────────┘
+                  ┌─────────────────────────────────────────┐
+                  │  linkedin_post.py                        │  Phase 3 (10h30)
+                  │   - post_document_carousel (titre=hook)  │
+                  │   - post_text_only                       │
+                  │   - post_first_comment                   │
+                  └────────────┬────────────────────────────┘
+                               ▼
+                  ┌─────────────────────────────────────────┐
+                  │  history.py SQLite                       │
+                  │   - posts (+ registre, activity_id)      │
+                  │   - hook_variants (rotation + veto)      │
+                  │   - post_analytics (monotone)            │
+                  │   - format_history, follower_growth,     │
+                  │     audience_snapshot                    │
+                  └─────────────────────────────────────────┘
 
        ┌──────────────────────────────────────────────────┐
        │  import_analytics_csv.py (manuel hebdo)          │
@@ -72,9 +82,14 @@ Pipeline autonome pour le compte LinkedIn de Victor Lenain : RSS → 8 agents Cl
 | Format 1080×1350 portrait | `html_to_pdf.js` (60% espace vertical mobile en plus) |
 | **360Brew (mars 2026) : save > comment > like** (save = 5× reach vs like) — LinkedIn VP Product, Upgrowth | Carrousels designés "saveable" (frameworks, checklists, post-mortems) |
 | Dwell time = signal #1 ("Depth Score") — LinkBoost Q2 2026 | 5-10 slides bien rythmées + slide CTA finale |
-| Hashtags 3-5 ciblés (pyramid : 1 broad + 2-3 nichés) — Sprout Social 2026 | 5 hashtags fixes (`#IntégrationIA #PME #IA #Productivité #Freelance`) |
+| Hashtags : poids algo réduit, 1-3 pertinents suffisent — Voketa 2026, van der Blom (impact minimal au-delà) | 3 au total : 2 fixes (`#IntégrationIA #IA`) + 1 topical roté par post (cf. `HASHTAG_TOPICAL_SETS`) |
+| Post texte : sweet spot 1 301-2 500 chars, <400 chars ≈ -27% engagement — AuthoredUp 2026 | Text Writer cible 1 300-2 000 chars |
 | Cadence sweet spot 3-5/sem (au-delà : -18 à -32% engagement par post) — Buffer 2M+ posts 2026 | cron mar/mer/jeu 10h30 (3/sem) |
 | Détection sémantique hooks copy-paste (templates anglais saturés) par 360Brew | Agent 5 (Anti-AI Detector) + liste `ANTI_AI_PATTERNS` enrichie 2026 |
+| Répétition structurelle détectable (même CTA, mêmes hashtags, même moule de slide) | Rotation déterministe : CTA body (3 variantes dont vide), CTA slide (3), hashtags (2 fixes + 3 sets topicaux), cadres actionnables variés, 1er commentaire pitch 1/3 + valeur 2/3 |
+| L'algorithme distribue d'abord au réseau existant → écrire pour une audience absente = posts morts | Persona recalibrée 2026-06 sur la démographie réelle (fondateurs/CTO tech, pas "PDG d'usine non-tech") |
+| Contenu première personne = levier d'engagement n°1, mais zéro fabrication | Registre "preuve" ancré sur `victor_stories.json` (expériences réelles validées par Victor ; registre sauté si banque vide) |
+| La voix qui performe = celle du compte, pas un template : les posts manuels de Victor (27,7k / 7,5k / 3,4k impressions) vouvoient, ton sobre, zéro marqueur oral artificiel | `VOICE_RULES` recalibrées 2026-06 sur le corpus réel : vouvoiement strict, fragments staccato, antithèse de clôture, chiffres concrets. Enforcement : critère veto du Hook Judge + détecteur sémantique (agent 5) sur le tutoiement |
 | Analytics : memberCreatorPostAnalytics requiert Community Management API (entité légale) | Pour "Share on LinkedIn" : `import_analytics_csv.py` (export UI hebdo). Le module `linkedin_analytics.py` reste dispo si Community Management décroché un jour. |
 | LinkedIn-Version `202605` (release 2026-05-11) | `LINKEDIN_API_VERSION = "202605"` dans `config.py` |
 
@@ -91,24 +106,29 @@ Pipeline autonome pour le compte LinkedIn de Victor Lenain : RSS → 8 agents Cl
 
 ```
 linkedin-posts/                      # code (versionné)
-├── config.py                        # models, system blocks cacheables, formats, anti-AI patterns
-├── anthropic_client.py              # wrapper SDK : retry + tool_use forcé
+├── config.py                        # models, persona/audience, registres, rotations CTA/hashtags
+├── anthropic_client.py              # wrapper SDK : retry + tool_use forcé + tracking coût
 ├── rss_fetch.py                     # veille RSS + scoring Haiku
-├── generate_post.py                 # pipeline 8 agents Sonnet+Haiku
-├── format_selector.py               # carousel / text (polls retirés 2026)
-├── history.py                       # SQLite (4 tables)
+├── generate_post.py                 # orchestration agents Sonnet+Haiku (carousel + text)
+├── format_selector.py               # select_format (carousel/text) + select_registre (LRU)
+├── agents/
+│   ├── tools.py                     # JSON Schemas tool_use (slides kinds, hooks+body_lines, text body)
+│   ├── system.py                    # injection learnings hebdo dans le system block
+│   └── stories.py                   # banque d'anecdotes réelles (registre preuve)
+├── victor_stories.example.json      # template à copier vers data/state/victor_stories.json
+├── history.py                       # SQLite (posts+registre+activity_id, analytics monotones)
 ├── linkedin_post.py                 # API LinkedIn /rest/posts v202605 (carousel + text + comment ; poll legacy)
 ├── linkedin_analytics.py            # /rest/memberCreatorPostAnalytics — gated Community Management
-├── import_analytics_csv.py          # IMPORT manuel CSV depuis UI LinkedIn (alternative API analytics)
+├── import_analytics_csv.py          # import XLSX UI LinkedIn (match activity_id/date + --heal)
 ├── weekly_report.py                 # synthèse hebdo + Gmail SMTP
 ├── oauth_setup.py                   # OAuth OpenID Connect (scope w_member_social uniquement)
 ├── token_refresh.py                 # refresh prophylactique
-├── html_to_pdf.js                   # Puppeteer 1080×1350
-├── pipeline.sh                      # cron mar/mer/jeu 10h30 (publie post + commentaire ; --dry-run pour tests)
+├── html_to_pdf.js                   # Puppeteer 1080×1350 — slides structurées (std/list/number)
+├── pipeline.sh                      # 3 phases : --select-only 8h / --draft 9h / publish 10h30
 ├── fetch_analytics.sh               # cron daily 21h (no-op si scope absent)
 ├── weekly_report.sh                 # cron lundi 7h
 ├── healthcheck.sh                   # cron daily 8h
-├── dashboard.py                     # UI Streamlit (Historique / Analytics / Tests + toggle publi auto)
+├── dashboard.py                     # UI Streamlit (Approbation / Analytics+IA / Learnings / Historique / Tests)
 ├── ui.sh                            # launcher Streamlit sur localhost:8501
 ├── templates/carousel.html
 └── requirements.txt
@@ -167,7 +187,9 @@ crontab -e
 ```cron
 PATH=/home/victormoi/.nvm/versions/node/v22.17.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
-# Mar/Mer/Jeu 10h30 — cadence 3/sem (sweet spot LinkedIn 2026)
+# Mar/Mer/Jeu — 3 phases : sélection 8h, draft 9h, publication 10h30 (si approuvé dashboard)
+0 8 * * 2,3,4 cd ~/linkedin-posts && ./pipeline.sh --select-only >> ~/linkedin-posts-data/logs/cron.log 2>&1
+0 9 * * 2,3,4 cd ~/linkedin-posts && ./pipeline.sh --draft >> ~/linkedin-posts-data/logs/cron.log 2>&1
 30 10 * * 2,3,4 cd ~/linkedin-posts && ./pipeline.sh >> ~/linkedin-posts-data/logs/cron.log 2>&1
 # Daily 21h — analytics (no-op si scope absent, sinon fetch via API)
 0 21 * * * cd ~/linkedin-posts && ./fetch_analytics.sh >> ~/linkedin-posts-data/logs/cron.log 2>&1
@@ -178,6 +200,13 @@ PATH=/home/victormoi/.nvm/versions/node/v22.17.0/bin:/usr/local/sbin:/usr/local/
 ```
 
 **Workflow analytics manuel hebdo** (à faire le lundi avant le `weekly_report`) :
+
+> L'import matche les posts par `linkedin_activity_id` puis par DATE de publication
+> (l'export XLSX expose `urn:li:activity:N`, l'API de publication renvoie
+> `urn:li:ugcPost/share:M` — IDs différents). Les valeurs inférieures au cumul connu
+> (exports fenêtrés) sont rejetées. `python3 import_analytics_csv.py --heal` répare
+> les doublons external historiques (auto-exécuté à chaque import).
+
 ```bash
 # 1. LinkedIn UI : Profil → Analytics → "Show all analytics" → Export CSV
 # 2. Copier le fichier sur victorserv (rsync ou scp)

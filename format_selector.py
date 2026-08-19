@@ -18,8 +18,14 @@ Pas de LLM ici : règle pure, prévisible. La décision est loggée dans format_
 
 import sys
 
-from config import FORMAT_CAROUSEL, FORMAT_TEXT, MAX_SAME_FORMAT_STREAK
-from history import recent_formats, record_format_decision
+from config import (
+    FORMAT_CAROUSEL,
+    FORMAT_TEXT,
+    MAX_SAME_FORMAT_STREAK,
+    REGISTRE_PREUVE,
+    REGISTRES_ROTATION,
+)
+from history import recent_formats, recent_registres, record_format_decision
 
 
 def _carousel_streak(formats: list[str]) -> int:
@@ -45,6 +51,31 @@ def select_format() -> tuple[str, str]:
         reason = f"carrousel par défaut (streak actuel : {streak}/{MAX_SAME_FORMAT_STREAK})"
     record_format_decision(decision, reason)
     return decision, reason
+
+
+def select_registre(stories_available: bool) -> tuple[str, str]:
+    """Registre éditorial du prochain post : least-recently-used parmi les registres
+    disponibles (preuve retiré si la banque d'anecdotes est vide — on n'invente pas).
+
+    Déterministe, pas de LLM. Premier post de l'historique → pedagogie
+    (1er élément de REGISTRES_ROTATION).
+    """
+    options = [r for r in REGISTRES_ROTATION if r != REGISTRE_PREUVE or stories_available]
+    recent = recent_registres(limit=10)
+
+    def last_use(registre: str) -> int:
+        # Index dans recent = ancienneté du dernier usage. Jamais utilisé → priorité max.
+        try:
+            return recent.index(registre)
+        except ValueError:
+            return len(recent) + 1
+
+    choice = max(options, key=last_use)
+    if not stories_available:
+        reason = f"LRU parmi {options} (preuve sautée : victor_stories.json vide)"
+    else:
+        reason = f"LRU parmi {options}, derniers publiés : {recent[:3]}"
+    return choice, reason
 
 
 if __name__ == "__main__":

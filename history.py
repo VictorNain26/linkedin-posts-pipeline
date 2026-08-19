@@ -149,13 +149,19 @@ def _conn():
     return sqlite3.connect(DB_PATH, timeout=SQLITE_TIMEOUT)
 
 
-# Migrations idempotentes : colonnes coût ajoutées après le schéma initial.
+# Migrations idempotentes : colonnes ajoutées après le schéma initial.
 _MIGRATIONS = [
     "ALTER TABLE posts ADD COLUMN cost_usd REAL",
     "ALTER TABLE posts ADD COLUMN tokens_in INTEGER",
     "ALTER TABLE posts ADD COLUMN tokens_out INTEGER",
     "ALTER TABLE posts ADD COLUMN tokens_cache_write INTEGER",
     "ALTER TABLE posts ADD COLUMN tokens_cache_read INTEGER",
+    # ID activity LinkedIn (urn:li:activity:N, visible dans les URLs d'export XLSX).
+    # ≠ urn:li:ugcPost/share stocké à la publication — c'est CE mismatch qui empêchait
+    # tout rattachement de métriques aux posts du pipeline. Rempli au 1er match par date.
+    "ALTER TABLE posts ADD COLUMN linkedin_activity_id TEXT",
+    # Registre éditorial du post : pain / pedagogie / preuve (rotation P1)
+    "ALTER TABLE posts ADD COLUMN registre TEXT",
 ]
 
 
@@ -187,14 +193,15 @@ def record_post(
     tokens_out: int | None = None,
     tokens_cache_write: int | None = None,
     tokens_cache_read: int | None = None,
+    registre: str | None = None,
 ) -> int:
     init_db()
     with _conn() as conn:
         cur = conn.execute(
             """INSERT INTO posts
                (published_at, topic, slug, format, keywords, linkedin_post_id, linkedin_comment_id, status,
-                cost_usd, tokens_in, tokens_out, tokens_cache_write, tokens_cache_read)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                cost_usd, tokens_in, tokens_out, tokens_cache_write, tokens_cache_read, registre)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 datetime.now().isoformat(),
                 topic,
@@ -209,6 +216,7 @@ def record_post(
                 tokens_out,
                 tokens_cache_write,
                 tokens_cache_read,
+                registre,
             ),
         )
         return cur.lastrowid
@@ -327,15 +335,141 @@ def formula_win_rate(days: int = 90) -> dict[str, dict]:
 # ──────────────────────────────────────────────────────────────
 # Analytics
 # ──────────────────────────────────────────────────────────────
-def upsert_analytics(post_id: int, metric: str, count: int) -> None:
+def upsert_analytics(post_id: int, metric: str, count: int, *, monotonic: bool = True) -> bool:
+    """Enregistre une métrique. Renvoie True si écrite, False si rejetée.
+
+    monotonic=True (défaut) : les métriques LinkedIn (impressions, interactions) sont
+    cumulatives — une valeur INFÉRIEURE au max connu vient forcément d'un export FENÊTRÉ
+    (ex : export 7j d'un vieux post → 3 impressions "dans la fenêtre" alors que le cumul
+    réel est 1383). On la rejette pour ne pas écraser le cumul affiché par le dashboard.
+    """
     init_db()
     with _conn() as conn:
+        if monotonic:
+            row = conn.execute(
+                "SELECT MAX(count) FROM post_analytics WHERE post_id = ? AND metric = ?",
+                (post_id, metric),
+            ).fetchone()
+            if row and row[0] is not None and count < row[0]:
+                return False
         conn.execute(
             """INSERT INTO post_analytics (post_id, metric, count, fetched_at)
                VALUES (?, ?, ?, ?)
                ON CONFLICT(post_id, metric, fetched_at) DO UPDATE SET count = excluded.count""",
             (post_id, metric, count, datetime.now().isoformat()),
         )
+        return True
+
+
+def purge_non_monotonic_analytics() -> int:
+    """Supprime les lignes analytics héritées des imports fenêtrés : toute ligne dont le
+    count est strictement inférieur à un count ANTÉRIEUR pour le même (post, metric).
+    Renvoie le nombre de lignes supprimées. Réparation one-shot, idempotente."""
+    init_db()
+    with _conn() as conn:
+        cur = conn.execute(
+            """DELETE FROM post_analytics WHERE id IN (
+                   SELECT pa1.id FROM post_analytics pa1
+                   WHERE EXISTS (
+                       SELECT 1 FROM post_analytics pa2
+                       WHERE pa2.post_id = pa1.post_id AND pa2.metric = pa1.metric
+                         AND pa2.fetched_at < pa1.fetched_at AND pa2.count > pa1.count
+                   )
+               )"""
+        )
+        return cur.rowcount
+
+
+def set_activity_id(post_id: int, activity_id: str) -> None:
+    """Mémorise l'ID activity LinkedIn d'un post (pour matching exact aux imports suivants)."""
+    init_db()
+    with _conn() as conn:
+        conn.execute("UPDATE posts SET linkedin_activity_id = ? WHERE id = ?", (activity_id, post_id))
+
+
+def find_post_by_activity_id(activity_id: str) -> int | None:
+    init_db()
+    with _conn() as conn:
+        row = conn.execute(
+            "SELECT id FROM posts WHERE linkedin_activity_id = ? LIMIT 1", (activity_id,)
+        ).fetchone()
+    return row[0] if row else None
+
+
+def published_count() -> int:
+    """Nombre de posts publiés — sert d'index de rotation déterministe (CTA, hashtags,
+    mode du 1er commentaire). Stable entre dry-runs, n'avance qu'à la publication."""
+    init_db()
+    with _conn() as conn:
+        row = conn.execute("SELECT COUNT(*) FROM posts WHERE status = 'published'").fetchone()
+    return row[0] if row else 0
+
+
+def recent_winner_formulas(limit: int = 6) -> list[str]:
+    """Formules de hook gagnantes des derniers posts publiés, plus récent d'abord.
+    Sert à la rotation honnête des formules (chaque formule doit être exposée
+    pour que la comparaison de perfs ait un sens)."""
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            """SELECT hv.formula FROM hook_variants hv
+               JOIN posts p ON p.id = hv.post_id
+               WHERE hv.is_winner = 1 AND p.status = 'published'
+               ORDER BY p.published_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def recent_registres(limit: int = 10) -> list[str]:
+    """Registres des derniers posts publiés, du plus récent au plus ancien.
+    Les posts antérieurs à la colonne (registre NULL) sont ignorés."""
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            """SELECT registre FROM posts
+               WHERE status = 'published' AND registre IS NOT NULL
+               ORDER BY published_at DESC LIMIT ?""",
+            (limit,),
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def find_published_post_by_date(date_iso: str) -> int | None:
+    """Post 'published' du jour date_iso (YYYY-MM-DD), ou None.
+
+    Fiable car pipeline.sh garantit 1 publication max/jour (posted_today guard).
+    Limite assumée : un post publié MANUELLEMENT le même jour qu'un post pipeline
+    serait rattaché au post pipeline — préférer poster manuellement un autre jour.
+    """
+    init_db()
+    with _conn() as conn:
+        rows = conn.execute(
+            "SELECT id FROM posts WHERE status = 'published' AND date(published_at) = ?",
+            (date_iso,),
+        ).fetchall()
+    return rows[0][0] if len(rows) == 1 else None
+
+
+def merge_post_into(src_id: int, dst_id: int) -> None:
+    """Fusionne un post doublon (src, typiquement 'external') dans le vrai post (dst) :
+    réassigne analytics + activity_id, supprime le doublon."""
+    init_db()
+    with _conn() as conn:
+        src = conn.execute(
+            "SELECT linkedin_activity_id, linkedin_post_id FROM posts WHERE id = ?", (src_id,)
+        ).fetchone()
+        if src is None:
+            return
+        aid = src[0] or (src[1].rsplit(":", 1)[-1] if src[1] and "activity" in src[1] else None)
+        conn.execute("UPDATE post_analytics SET post_id = ? WHERE post_id = ?", (dst_id, src_id))
+        if aid:
+            conn.execute(
+                "UPDATE posts SET linkedin_activity_id = ? WHERE id = ? AND linkedin_activity_id IS NULL",
+                (aid, dst_id),
+            )
+        conn.execute("DELETE FROM hook_variants WHERE post_id = ?", (src_id,))
+        conn.execute("DELETE FROM posts WHERE id = ?", (src_id,))
 
 
 def posts_to_fetch_analytics(days: int = 30) -> list[tuple[int, str]]:

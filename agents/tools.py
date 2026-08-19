@@ -41,12 +41,20 @@ PAIN_TOOL = {
 
 ANGLE_TOOL = {
     "name": "submit_angle",
-    "description": "Submit the contrarian angle and the visual hook of slide 1.",
+    "description": "Submit the editorial angle and the visual hook of slide 1.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "angle": {"type": "string", "description": "Contrarian angle in one sentence"},
+            "angle": {"type": "string", "description": "Editorial angle in one sentence"},
             "hook": {"type": "string", "description": "Slide 1 hook, max 8 words", "maxLength": 80},
+            "story_id": {
+                "type": "string",
+                "description": (
+                    "REGISTRE 'preuve' uniquement : id de la story Victor choisie dans "
+                    '<victor_stories_index>, ou "" si aucune ne colle naturellement. '
+                    'Autres registres : "".'
+                ),
+            },
         },
         "required": ["angle", "hook"],
     },
@@ -68,17 +76,62 @@ SLIDES_TOOL = {
                 "items": {
                     "type": "object",
                     "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": ["standard", "list", "number"],
+                            "description": (
+                                "standard = phrase principale + développement. "
+                                "list = titre (main) + 2-5 items courts (champ items) — pour les "
+                                "checklists/questions, JAMAIS une liste écrasée dans sub. "
+                                "number = UN chiffre marquant en très grand (main = le chiffre seul, "
+                                "ex '2 M' ou '-40%', sub = ce qu'il signifie). "
+                                "Vise 1 slide list OU number par carrousel quand la matière s'y prête."
+                            ),
+                        },
                         "main": {
                             "type": "string",
-                            "description": "Main text of the slide, 1 idea, max 15 words",
+                            "description": (
+                                "Main text, 1 idea, max 15 words. Mets en gras le ou les 1-2 mots "
+                                "PIVOTS avec **mot** (rendu en bleu accent). Pour kind=number : "
+                                "le chiffre seul, court."
+                            ),
                         },
                         "sub": {"type": "string", "description": "Optional supporting line, can be empty"},
+                        "items": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 90},
+                            "maxItems": 5,
+                            "description": "kind=list uniquement : 2-5 items courts (1 ligne chacun)",
+                        },
                     },
                     "required": ["main"],
                 },
             }
         },
         "required": ["slides"],
+    },
+}
+
+TEXT_BODY_TOOL = {
+    "name": "submit_text_body",
+    "description": "Submit the body of a long-form LinkedIn text post (no carousel).",
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "body": {
+                "type": "string",
+                "minLength": 1100,
+                "maxLength": 2200,
+                "description": (
+                    "Corps du post text-only : 1300-2000 caractères, voix de Victor (vouvoiement), "
+                    "phrases courtes, sauts de ligne fréquents (1-2 phrases par paragraphe, "
+                    "style LinkedIn aéré). NE PAS inclure le hook d'ouverture (ajouté avant), "
+                    "ni hashtags ni CTA final (ajoutés après). AUCUN markdown (**, _, #) : "
+                    "LinkedIn affiche les astérisques littéralement."
+                ),
+            }
+        },
+        "required": ["body"],
     },
 }
 
@@ -151,8 +204,20 @@ HOOK_VARIANTS_TOOL = {
                                 "(360Brew détecte sémantiquement les hooks copy-paste depuis mars 2026)."
                             ),
                         },
+                        "body_lines": {
+                            "type": "array",
+                            "minItems": 1,
+                            "maxItems": 3,
+                            "items": {"type": "string", "maxLength": 140},
+                            "description": (
+                                "1-3 lignes courtes qui suivent le hook dans le body du post "
+                                "(au-dessus du carrousel) : contexte ou tension, PAS un résumé "
+                                "qui tue le swipe. La dernière peut teaser le carrousel. "
+                                "Cohérentes avec CE hook précis."
+                            ),
+                        },
                     },
-                    "required": ["formula", "hook"],
+                    "required": ["formula", "hook", "body_lines"],
                 },
             }
         },
@@ -175,7 +240,7 @@ HOOK_JUDGE_TOOL = {
 
 CTA_COMMENT_TOOL = {
     "name": "submit_cta_comment",
-    "description": "Submit the first comment as a CTA Victor posts under his own post.",
+    "description": "Submit the first comment Victor posts under his own post.",
     "input_schema": {
         "type": "object",
         "properties": {
@@ -184,9 +249,9 @@ CTA_COMMENT_TOOL = {
                 "minLength": 60,
                 "maxLength": 400,
                 "description": (
-                    "CTA direct + bénéfice clair pour le prospect + canal d'action 'DM ouvert'. "
-                    "AUCUN lien externe (LinkedIn pénalise -80% les commentaires avec URL en 2026). "
-                    "PAS une question d'engagement, c'est une invitation à agir."
+                    "1er commentaire sous le post. Le contenu exact (pitch CTA ou complément "
+                    "de valeur) est dicté par le prompt. AUCUN lien externe dans tous les cas "
+                    "(LinkedIn pénalise -80% les commentaires avec URL en 2026)."
                 ),
             }
         },
